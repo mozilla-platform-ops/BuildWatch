@@ -6,6 +6,13 @@ A native iOS app for Mozilla engineers to monitor Firefox CI build status from t
 ![Swift](https://img.shields.io/badge/swift-6-orange)
 ![License](https://img.shields.io/badge/license-MPL--2.0-green)
 
+<p align="center">
+  <img src="docs/screenshots/try-pushes.png" width="220" alt="Try Pushes" />
+  <img src="docs/screenshots/push-detail.png" width="220" alt="Push Detail" />
+  <img src="docs/screenshots/settings.png" width="220" alt="Settings" />
+</p>
+<p align="center"><em>Try Pushes &nbsp;·&nbsp; Push Detail &nbsp;·&nbsp; Settings</em></p>
+
 ---
 
 ## Features
