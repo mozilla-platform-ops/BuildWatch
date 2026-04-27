@@ -60,6 +60,15 @@ final class TreeHerderService {
         return try parseCompactJobs(from: data)
     }
 
+    // MARK: - Text Log Errors
+
+    func fetchTextLogErrors(jobId: Int) async throws -> [TextLogError] {
+        let url = URL(string: "\(base)/project/try/jobs/\(jobId)/text_log_errors/")!
+        let (data, response) = try await session.data(from: url)
+        try validateResponse(response)
+        return try JSONDecoder().decode([TextLogError].self, from: data)
+    }
+
     // MARK: - Actions
 
     func retriggerJob(jobId: Int) async throws {

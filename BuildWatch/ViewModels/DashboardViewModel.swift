@@ -5,6 +5,7 @@ final class DashboardViewModel {
 
     var pushes: [Push] = []
     var jobsByPush: [Int: [Job]] = [:]
+    var failureLinesByPush: [Int: [TextLogError]] = [:]
     var isRefreshing = false
     var errorMessage: String?
     var lastRefresh: Date?
@@ -64,6 +65,43 @@ final class DashboardViewModel {
         do {
             jobsByPush[push.id] = try await TreeHerderService.shared.fetchJobs(pushId: push.id)
         } catch {}
+    }
+
+    func fetchFailureLines(for push: Push) async {
+        guard failureLinesByPush[push.id] == nil else { return }
+        let failed = Array((jobsByPush[push.id] ?? [])
+            .filter { $0.result.isFailure && $0.state == .completed }
+            .prefix(15))
+        guard !failed.isEmpty else {
+            failureLinesByPush[push.id] = []
+            return
+        }
+        var allErrors: [TextLogError] = []
+        await withTaskGroup(of: [TextLogError].self) { group in
+            for job in failed {
+                group.addTask {
+                    (try? await TreeHerderService.shared.fetchTextLogErrors(jobId: job.id)) ?? []
+                }
+            }
+            for await errors in group {
+                allErrors.append(contentsOf: errors)
+            }
+        }
+        failureLinesByPush[push.id] = allErrors
+    }
+
+    func failureGroups(for push: Push) -> [FailureGroup] {
+        let errors = failureLinesByPush[push.id] ?? []
+        var byKey: [String: (jobs: Set<Int>, first: String)] = [:]
+        for error in errors {
+            let key = error.groupKey
+            var entry = byKey[key] ?? (jobs: [], first: error.line)
+            entry.jobs.insert(error.job)
+            byKey[key] = entry
+        }
+        return byKey.map { key, val in
+            FailureGroup(id: key, pattern: key, affectedJobCount: val.jobs.count, exampleLine: val.first)
+        }.sorted { $0.affectedJobCount > $1.affectedJobCount }
     }
 
     func retrigger(job: Job) async throws {

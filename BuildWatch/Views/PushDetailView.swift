@@ -8,6 +8,8 @@ struct PushDetailView: View {
     @State private var jobToRetrigger: Job?
     @State private var isRetriggering = false
     @State private var actionError: String?
+    @State private var safariURL: SafariURL?
+    @State private var showFailureSummary = false
 
     enum JobFilter: String, CaseIterable {
         case all      = "All"
@@ -34,6 +36,11 @@ struct PushDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { filterToolbar }
         .task { await viewModel.fetchJobs(for: push) }
+        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
+        .sheet(isPresented: $showFailureSummary) {
+            FailureSummaryView(push: push)
+                .environment(viewModel)
+        }
         .alert("Retrigger Job?", isPresented: $showRetriggerAlert, presenting: jobToRetrigger) { job in
             Button("Retrigger") { Task { await retrigger(job: job) } }
             Button("Cancel", role: .cancel) {}
@@ -77,8 +84,10 @@ struct PushDetailView: View {
                                 .foregroundStyle(.secondary)
 
                             if let bugNum = revision.bugNumber {
-                                Link("Bug \(bugNum)", destination: URL(string: "https://bugzilla.mozilla.org/show_bug.cgi?id=\(bugNum)")!)
-                                    .font(.caption)
+                                Button("Bug \(bugNum)") {
+                                    safariURL = SafariURL(url: URL(string: "https://bugzilla.mozilla.org/show_bug.cgi?id=\(bugNum)")!)
+                                }
+                                .font(.caption)
                             }
                         }
                     }
@@ -104,12 +113,24 @@ struct PushDetailView: View {
             }
             .disabled((viewModel.jobsByPush[push.id] ?? []).filter { $0.result.isFailure }.isEmpty)
 
-            Link(destination: treeherderURL) {
+            let failedJobs = (viewModel.jobsByPush[push.id] ?? []).filter { $0.result.isFailure && $0.state == .completed }
+            Button {
+                showFailureSummary = true
+            } label: {
+                Label("Failure Summary", systemImage: "list.bullet.rectangle.portrait")
+            }
+            .disabled(failedJobs.isEmpty)
+
+            Button {
+                safariURL = SafariURL(url: treeherderURL)
+            } label: {
                 Label("Open in TreeHerder", systemImage: "arrow.up.right.square")
             }
 
             if let bugURL {
-                Link(destination: bugURL) {
+                Button {
+                    safariURL = SafariURL(url: bugURL)
+                } label: {
                     Label("Open Bug", systemImage: "ant.fill")
                 }
             }
@@ -227,6 +248,7 @@ struct PushDetailView: View {
 struct JobRowView: View {
     let job: Job
     var onRetrigger: (() -> Void)? = nil
+    @State private var safariURL: SafariURL?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -266,11 +288,14 @@ struct JobRowView: View {
             }
 
             if let taskId = job.taskId {
-                Link(destination: URL(string: "https://firefox-ci-tc.services.mozilla.com/tasks/\(taskId)")!) {
+                Button {
+                    safariURL = SafariURL(url: URL(string: "https://firefox-ci-tc.services.mozilla.com/tasks/\(taskId)")!)
+                } label: {
                     Image(systemName: "arrow.up.right.square")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
             }
         }
         .swipeActions(edge: .trailing) {
@@ -285,12 +310,15 @@ struct JobRowView: View {
         }
         .contextMenu {
             if let taskId = job.taskId {
-                Link("Open in Taskcluster", destination: URL(string: "https://firefox-ci-tc.services.mozilla.com/tasks/\(taskId)")!)
+                Button("Open in Taskcluster") {
+                    safariURL = SafariURL(url: URL(string: "https://firefox-ci-tc.services.mozilla.com/tasks/\(taskId)")!)
+                }
             }
             if let onRetrigger {
                 Button("Retrigger") { onRetrigger() }
             }
         }
+        .sheet(item: $safariURL) { item in SafariView(url: item.url) }
     }
 }
 

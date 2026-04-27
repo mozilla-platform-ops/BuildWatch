@@ -1,4 +1,6 @@
 import Foundation
+import SafariServices
+import SwiftUI
 
 // Safe array subscript — handles optional indices from dictionary lookups
 extension Array {
@@ -30,4 +32,17 @@ extension String {
     var isValidEmail: Bool {
         contains("@") && contains(".")
     }
+}
+
+// MARK: - In-App Browser
+
+struct SafariView: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> SFSafariViewController { SFSafariViewController(url: url) }
+    func updateUIViewController(_ vc: SFSafariViewController, context: Context) {}
+}
+
+struct SafariURL: Identifiable {
+    let id = UUID()
+    let url: URL
 }
