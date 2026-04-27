@@ -31,7 +31,8 @@ A native iOS app for Mozilla engineers to monitor Firefox CI build status from t
 - Filter by All / Failures / Running
 - Swipe left on any job to retrigger it
 - **Retrigger All Failed** with a single tap
-- Links to TreeHerder and Taskcluster for each push
+- **Failure Summary** — groups failed jobs by test name, shows affected job counts and raw error lines from TreeHerder log data
+- All external links (TreeHerder, Taskcluster, Bugzilla) open in an in-app browser — tap Done to return instantly without leaving the app
 - Duration shown for every completed job
 
 ### My Pushes
@@ -51,7 +52,7 @@ A native iOS app for Mozilla engineers to monitor Firefox CI build status from t
 
 | Source | Used For |
 |--------|----------|
-| [TreeHerder](https://treeherder.mozilla.org) | Push list, job results, retrigger actions |
+| [TreeHerder](https://treeherder.mozilla.org) | Push list, job results, retrigger actions, text log errors |
 | [TreeStatus](https://treestatus.prod.lando.prod.cloudops.mozgcp.net) | Tree open / closed / restricted status |
 | [Taskcluster](https://firefox-ci-tc.services.mozilla.com) | Task deep links |
 | [Bugzilla](https://bugzilla.mozilla.org) | Bug links from commit messages, filing new bugs |
@@ -65,17 +66,19 @@ BuildWatch/
 ├── Models/
 │   ├── Push.swift          — Push + PushRevision
 │   ├── Job.swift           — Job, JobResult, JobState, PlatformGroup
-│   └── TreeStatus.swift    — Tree open/closed state
+│   ├── TreeStatus.swift    — Tree open/closed state
+│   └── FailureLine.swift   — TextLogError, FailureGroup
 ├── Services/
 │   ├── TreeHerderService.swift   — All TreeHerder + TreeStatus API calls
 │   └── BugzillaService.swift     — Bug filing
 ├── ViewModels/
 │   └── DashboardViewModel.swift  — @Observable state, drives all three tabs
 └── Views/
-    ├── DashboardView.swift     — Push list
-    ├── PushDetailView.swift    — Jobs, quick actions
-    ├── MyPushesView.swift      — Filtered to your pushes
-    └── SettingsView.swift      — Preferences
+    ├── DashboardView.swift       — Push list
+    ├── PushDetailView.swift      — Jobs, quick actions
+    ├── FailureSummaryView.swift  — Grouped failure analysis sheet
+    ├── MyPushesView.swift        — Filtered to your pushes
+    └── SettingsView.swift        — Preferences
 ```
 
 State is managed with Swift's `@Observable` macro. All networking uses `async/await` with `URLSession`. The TreeHerder jobs response uses a compact `[[Any]]` format that's parsed with `JSONSerialization` and an index map built from the `job_property_names` field.
@@ -130,4 +133,4 @@ PRs welcome. File issues at [bugzilla.mozilla.org](https://bugzilla.mozilla.org)
 
 ---
 
-*Built by [@rcurranmoz](https://github.com/rcurranmoz) · Powered by [TreeHerder](https://treeherder.mozilla.org)*
+*Built by [@rcurranmoz](https://github.com/rcurranmoz) · Maintained at [mozilla-platform-ops/BuildWatch](https://github.com/mozilla-platform-ops/BuildWatch) · Powered by [TreeHerder](https://treeherder.mozilla.org)*
