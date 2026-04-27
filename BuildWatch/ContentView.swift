@@ -1,21 +1,15 @@
-//
-//  ContentView.swift
-//  BuildWatch
-//
-//  Created by Ryan Curran on 3/2/26.
-//
-
 import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        TabView {
+            Tab("Try", systemImage: "hammer.fill") {
+                TryPushesView()
+            }
+            Tab("Settings", systemImage: "gearshape.fill") {
+                SettingsView()
+            }
         }
-        .padding()
     }
 }
 
