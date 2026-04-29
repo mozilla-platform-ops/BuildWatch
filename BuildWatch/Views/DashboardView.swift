@@ -37,6 +37,15 @@ struct TryPushesView: View {
                 NavigationLink(destination: PushDetailView(push: push)) {
                     PushRowView(push: push)
                 }
+                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    let watched = viewModel.watchedPushIds.contains(push.id)
+                    Button {
+                        viewModel.toggleWatch(push: push)
+                    } label: {
+                        Label(watched ? "Unwatch" : "Watch", systemImage: watched ? "bell.slash.fill" : "bell.fill")
+                    }
+                    .tint(watched ? .gray : .orange)
+                }
                 .task { await viewModel.fetchJobs(for: push) }
             }
         }
@@ -125,6 +134,12 @@ struct PushRowView: View {
                     .foregroundStyle(.secondary)
 
                 Spacer()
+
+                if viewModel.watchedPushIds.contains(push.id) {
+                    Image(systemName: "bell.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
 
                 PlatformStatusDots(
                     groups: viewModel.platformGroups(for: push),

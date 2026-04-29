@@ -6,6 +6,17 @@ struct SettingsView: View {
 
     @State private var notificationStatus = ""
 
+    // Binds to just the LDAP handle; stores/reads the full email in AppStorage
+    private var ldapHandle: Binding<String> {
+        Binding(
+            get: { username.components(separatedBy: "@").first ?? username },
+            set: { newValue in
+                let handle = newValue.components(separatedBy: "@").first ?? newValue
+                username = handle.isEmpty ? "" : "\(handle)@mozilla.com"
+            }
+        )
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -30,20 +41,21 @@ struct SettingsView: View {
                     .frame(width: 36)
 
                 VStack(alignment: .leading) {
-                    Text("Mozilla Email / LDAP")
+                    Text("LDAP Username")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    TextField("you@mozilla.com", text: $username)
-                        .keyboardType(.emailAddress)
+                    TextField("rcurran", text: ldapHandle)
+                        .keyboardType(.asciiCapable)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                        .onKeyPress(.tab) { .handled }
                 }
             }
             .padding(.vertical, 4)
         } header: {
             Text("Profile")
         } footer: {
-            Text("Filters the try push list to your pushes.")
+            Text("Enter just your LDAP handle, e.g. rcurran. Filters try pushes to your commits.")
         }
     }
 
