@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 @Observable
 final class DashboardViewModel {
@@ -9,6 +10,14 @@ final class DashboardViewModel {
     var isRefreshing = false
     var errorMessage: String?
     var lastRefresh: Date?
+    var watchedPushIds: Set<Int> = []
+
+    private var notifiedPushIds: Set<Int> = []
+
+    init() {
+        let stored = UserDefaults.standard.array(forKey: "watchedPushIds") as? [Int] ?? []
+        watchedPushIds = Set(stored)
+    }
 
     var username: String {
         UserDefaults.standard.string(forKey: "username") ?? ""
@@ -41,6 +50,54 @@ final class DashboardViewModel {
         (jobsByPush[push.id] ?? []).contains { $0.state == .running || $0.state == .pending }
     }
 
+    // MARK: - Watch / Notify
+
+    func toggleWatch(push: Push) {
+        if watchedPushIds.contains(push.id) {
+            watchedPushIds.remove(push.id)
+        } else {
+            watchedPushIds.insert(push.id)
+            Task { await requestNotificationPermissionIfNeeded() }
+            checkCompletion(for: push)
+        }
+        UserDefaults.standard.set(Array(watchedPushIds), forKey: "watchedPushIds")
+    }
+
+    private func checkCompletion(for push: Push) {
+        guard watchedPushIds.contains(push.id),
+              !notifiedPushIds.contains(push.id),
+              let jobs = jobsByPush[push.id],
+              !jobs.isEmpty,
+              !jobs.contains(where: { $0.state == .running || $0.state == .pending })
+        else { return }
+
+        notifiedPushIds.insert(push.id)
+        watchedPushIds.remove(push.id)
+        UserDefaults.standard.set(Array(watchedPushIds), forKey: "watchedPushIds")
+
+        let failures = jobs.filter { $0.result.isFailure }.count
+        sendNotification(for: push, failures: failures)
+    }
+
+    private func sendNotification(for push: Push, failures: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = failures == 0 ? "Try push passed" : "Try push failed"
+        content.body = push.displayTitle
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "buildwatch-\(push.id)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    private func requestNotificationPermissionIfNeeded() async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        guard settings.authorizationStatus == .notDetermined else { return }
+        try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
+    }
+
     // MARK: - Data Loading
 
     func refresh() async {
@@ -52,7 +109,14 @@ final class DashboardViewModel {
             let author = username.isEmpty ? nil : username
             pushes = try await TreeHerderService.shared.fetchPushes(count: 20, author: author)
             lastRefresh = Date()
+            // Clear cached jobs for watched pushes so completion is re-checked
+            for push in pushes where watchedPushIds.contains(push.id) {
+                jobsByPush.removeValue(forKey: push.id)
+            }
             for push in pushes.prefix(5) {
+                Task { await fetchJobs(for: push) }
+            }
+            for push in pushes.dropFirst(5) where watchedPushIds.contains(push.id) {
                 Task { await fetchJobs(for: push) }
             }
         } catch {
@@ -64,6 +128,7 @@ final class DashboardViewModel {
         guard jobsByPush[push.id] == nil else { return }
         do {
             jobsByPush[push.id] = try await TreeHerderService.shared.fetchJobs(pushId: push.id)
+            checkCompletion(for: push)
         } catch {}
     }
 
