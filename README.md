@@ -18,14 +18,15 @@ A native iOS app for Mozilla engineers to monitor Firefox CI build status from t
 ## Features
 
 ### Dashboard
-- Live push list across mozilla-central, autoland, beta, release, and esr128
+- Live push list of your recent try pushes
 - Per-push platform status dots — color coded by worst result (green / red / orange / blue)
 - Failure count badge and animated spinner for in-progress builds
-- Tree status banner when the tree is closed or restricted
+- Swipe a push to **watch** it — you get a local notification when it finishes, with the
+  pass/fail count
 - Pull-to-refresh with last-updated timestamp, plus background polling every 30s while
   anything is still building (120s once everything has settled)
 - Incremental job refresh — a poll transfers only the jobs whose state changed
-- Haptic feedback on refresh, watch, retrigger, and push completion
+- Haptic feedback on refresh, watch, and push completion
 - Full VoiceOver support; status dots switch to distinct shapes under
   *Differentiate Without Color* and scale with Dynamic Type
 
@@ -33,23 +34,17 @@ A native iOS app for Mozilla engineers to monitor Firefox CI build status from t
 - Full commit messages with clickable bug number links
 - Jobs grouped by platform (linux64, win64, macos, android-arm64, …)
 - Filter by All / Failures / Running
-- Swipe left on any job to retrigger it
-- **Retrigger All Failed** with a single tap
 - **Failure Summary** — groups failed jobs by test name, shows affected job counts and raw error lines from TreeHerder log data
 - All external links (TreeHerder, Taskcluster, Bugzilla) open in an in-app browser — tap Done to return instantly without leaving the app
 - Duration shown for every completed job, and a live ticking elapsed time for running ones
-- **Retrigger All Failed** issues its requests concurrently and reports how many landed
 
 ### My Pushes
-- Filtered view of your own pushes via the TreeHerder `?author=` API
-- Set your Mozilla email once in Settings
+The Try tab is filtered to your own pushes via the TreeHerder `?author=` API. Set your
+Mozilla email once in Settings.
 
 ### Settings
-- LDAP / Mozilla email for the My Pushes tab
-- Bugzilla API key for filing bugs directly from a failure
-- Push notification opt-in (build failures, tree closures)
-- Default repository preference
-- Tier 2 job visibility toggle
+- LDAP handle, used to filter the push list to your own try pushes
+- Local notification opt-in, with the current authorization status
 
 ---
 
@@ -57,10 +52,9 @@ A native iOS app for Mozilla engineers to monitor Firefox CI build status from t
 
 | Source | Used For |
 |--------|----------|
-| [TreeHerder](https://treeherder.mozilla.org) | Push list, job results, retrigger actions, text log errors |
-| [TreeStatus](https://treestatus.prod.lando.prod.cloudops.mozgcp.net) | Tree open / closed / restricted status |
+| [TreeHerder](https://treeherder.mozilla.org) | Push list, job results, text log errors |
 | [Taskcluster](https://firefox-ci-tc.services.mozilla.com) | Task deep links |
-| [Bugzilla](https://bugzilla.mozilla.org) | Bug links from commit messages, filing new bugs |
+| [Bugzilla](https://bugzilla.mozilla.org) | Bug links parsed from commit messages |
 
 ---
 
@@ -101,6 +95,11 @@ through the gap.
 Derived state (platform grouping, pass/fail/running counts) is computed once in
 `PushSummary` when jobs land, rather than inside `body`.
 
+The automatic poll and an explicit pull-to-refresh cover deliberately different sets. The
+background timer only re-reads the head of the list plus anything watched, so the steady
+state stays at a handful of requests per tick no matter how far you scroll. A manual pull
+re-reads everything currently loaded, because that is the user asking.
+
 ### Benchmarks
 
 `Benchmarks/ParserBenchmark.swift` is a standalone executable that compares the parser
@@ -137,9 +136,7 @@ No external dependencies. No package manager.
 
 **My Pushes tab** — add your `@mozilla.com` email in Settings → Profile.
 
-**Bug filing** — generate a Bugzilla API key at [bugzilla.mozilla.org → Preferences → API Keys](https://bugzilla.mozilla.org/userprefs.cgi?tab=apikey) and paste it in Settings → Bugzilla Integration.
-
-**Retrigger / Acknowledge** — these actions call authenticated TreeHerder endpoints. Full support requires a Taskcluster OIDC session (coming soon).
+**Retrigger / Acknowledge** — not available. These call authenticated TreeHerder endpoints and need a Taskcluster OIDC session, which BuildWatch does not implement. The UI for them was removed rather than left in place failing silently; see the roadmap.
 
 ---
 
@@ -147,7 +144,9 @@ No external dependencies. No package manager.
 
 - [x] Local notifications when a watched push finishes
 - [ ] Push notifications for build failures via FCM
-- [ ] Acknowledge / classify failures
+- [ ] Taskcluster OIDC sign-in — the prerequisite for every write action below
+- [ ] Retrigger jobs (needs sign-in)
+- [ ] Acknowledge / classify failures (needs sign-in)
 - [ ] Backout via Lando API
 - [ ] File bug pre-filled with failure details
 - [ ] WebSocket live updates from TreeHerder (polling is incremental in the meantime)

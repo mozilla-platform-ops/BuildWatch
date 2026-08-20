@@ -3,13 +3,11 @@ import Foundation
 nonisolated enum BuildWatchError: LocalizedError {
     case invalidResponse
     case httpError(Int)
-    case retriggerFailed
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:  "Invalid response from server"
         case .httpError(let c): "HTTP error \(c)"
-        case .retriggerFailed:  "Failed to retrigger job"
         }
     }
 }
@@ -125,20 +123,6 @@ nonisolated final class TreeHerderService: Sendable {
         let (data, response) = try await session.data(from: url)
         try validateResponse(response)
         return try JSONDecoder().decode([TextLogError].self, from: data)
-    }
-
-    // MARK: - Actions
-
-    func retriggerJob(jobId: Int) async throws {
-        let url = URL(string: "\(base)/project/try/jobs/\(jobId)/retrigger/")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw BuildWatchError.retriggerFailed
-        }
     }
 
     // MARK: - Compact Job Parser

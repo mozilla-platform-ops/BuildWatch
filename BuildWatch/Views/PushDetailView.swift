@@ -4,12 +4,6 @@ struct PushDetailView: View {
     let push: Push
     @Environment(DashboardViewModel.self) private var viewModel
     @State private var selectedFilter: JobFilter = .all
-    @State private var showRetriggerAlert = false
-    @State private var jobToRetrigger: Job?
-    @State private var showRetriggerAllAlert = false
-    @State private var isRetriggeringAll = false
-    @State private var actionError: String?
-    @State private var actionNotice: String?
     @State private var safariURL: SafariURL?
     @State private var showFailureSummary = false
 
@@ -48,36 +42,6 @@ struct PushDetailView: View {
         .sheet(isPresented: $showFailureSummary) {
             FailureSummaryView(push: push)
                 .environment(viewModel)
-        }
-        .alert("Retrigger Job?", isPresented: $showRetriggerAlert, presenting: jobToRetrigger) { job in
-            Button("Retrigger") { Task { await retrigger(job: job) } }
-            Button("Cancel", role: .cancel) {}
-        } message: { job in
-            Text("Retrigger \"\(job.jobTypeName)\" on \(job.platformDisplay)?")
-        }
-        .alert("Retrigger All Failed?", isPresented: $showRetriggerAllAlert) {
-            Button("Retrigger \(failedJobs.count)", role: .destructive) {
-                Task { await retriggerAllFailed() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This queues \(failedJobs.count) job\(failedJobs.count == 1 ? "" : "s") again on try.")
-        }
-        .alert("Error", isPresented: .init(
-            get: { actionError != nil },
-            set: { if !$0 { actionError = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(actionError ?? "")
-        }
-        .alert("Done", isPresented: .init(
-            get: { actionNotice != nil },
-            set: { if !$0 { actionNotice = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(actionNotice ?? "")
         }
     }
 
@@ -133,23 +97,6 @@ struct PushDetailView: View {
     private var actionsSection: some View {
         Section("Quick Actions") {
             Button {
-                showRetriggerAllAlert = true
-            } label: {
-                HStack {
-                    Label("Retrigger All Failed", systemImage: "arrow.clockwise")
-                    Spacer()
-                    if isRetriggeringAll {
-                        ProgressView()
-                    } else if !failedJobs.isEmpty {
-                        Text("\(failedJobs.count)")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .disabled(failedJobs.isEmpty || isRetriggeringAll)
-
-            Button {
                 showFailureSummary = true
             } label: {
                 Label("Failure Summary", systemImage: "list.bullet.rectangle.portrait")
@@ -198,10 +145,7 @@ struct PushDetailView: View {
             ForEach(groups) { group in
                 Section {
                     ForEach(filteredJobs(in: group)) { job in
-                        JobRowView(job: job) {
-                            jobToRetrigger = job
-                            showRetriggerAlert = true
-                        }
+                        JobRowView(job: job)
                     }
                 } header: {
                     PlatformGroupHeader(group: group)
@@ -260,33 +204,12 @@ struct PushDetailView: View {
         }
         return nil
     }
-
-    private func retrigger(job: Job) async {
-        do {
-            try await viewModel.retrigger(job: job)
-            viewModel.emit(.retriggered)
-        } catch {
-            actionError = error.localizedDescription
-            viewModel.emit(.actionFailed)
-        }
-    }
-
-    private func retriggerAllFailed() async {
-        isRetriggeringAll = true
-        defer { isRetriggeringAll = false }
-
-        let outcome = await viewModel.retriggerAllFailed(for: push)
-        actionNotice = outcome.failed == 0
-            ? "Retriggered \(outcome.succeeded) job\(outcome.succeeded == 1 ? "" : "s")."
-            : "Retriggered \(outcome.succeeded), \(outcome.failed) failed."
-    }
 }
 
 // MARK: - Job Row
 
 struct JobRowView: View {
     let job: Job
-    var onRetrigger: (() -> Void)? = nil
     @State private var safariURL: SafariURL?
 
     var body: some View {
@@ -325,29 +248,13 @@ struct JobRowView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(job.accessibilityLabel)
         .accessibilityActions {
-            if let onRetrigger {
-                Button("Retrigger") { onRetrigger() }
-            }
             if let taskId = job.taskId {
                 Button("Open in Taskcluster") { safariURL = SafariURL(url: taskURL(taskId)) }
-            }
-        }
-        .swipeActions(edge: .trailing) {
-            if let onRetrigger {
-                Button {
-                    onRetrigger()
-                } label: {
-                    Label("Retrigger", systemImage: "arrow.clockwise")
-                }
-                .tint(StatusPalette.running)
             }
         }
         .contextMenu {
             if let taskId = job.taskId {
                 Button("Open in Taskcluster") { safariURL = SafariURL(url: taskURL(taskId)) }
-            }
-            if let onRetrigger {
-                Button("Retrigger") { onRetrigger() }
             }
         }
         .sheet(item: $safariURL) { item in SafariView(url: item.url) }

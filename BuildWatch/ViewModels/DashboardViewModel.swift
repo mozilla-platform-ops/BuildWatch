@@ -9,7 +9,6 @@ nonisolated enum HapticEvent: Equatable {
     case pushPassed
     case pushFailed
     case watchToggled
-    case retriggered
     case actionFailed
 
     var feedback: SensoryFeedback {
@@ -18,7 +17,6 @@ nonisolated enum HapticEvent: Equatable {
         case .pushPassed:   .success
         case .pushFailed:   .error
         case .watchToggled: .selection
-        case .retriggered:  .impact(weight: .medium)
         case .actionFailed: .warning
         }
     }
@@ -167,7 +165,7 @@ final class DashboardViewModel {
             pushes = fetched
             lastRefresh = Date()
 
-            await refreshJobs(for: pushesNeedingJobs(from: fetched))
+            await refreshJobs(for: refreshTargets(from: fetched))
             emit(.refreshed)
         } catch {
             errorMessage = error.localizedDescription
@@ -179,10 +177,29 @@ final class DashboardViewModel {
     /// pull-to-refresh spinner.
     func poll() async {
         guard !isRefreshing, !pushes.isEmpty else { return }
-        await refreshJobs(for: pushesNeedingJobs(from: pushes))
+        await refreshJobs(for: pollTargets(from: pushes))
     }
 
-    private func pushesNeedingJobs(from candidates: [Push]) -> [Push] {
+    /// What the 30-second timer re-reads: the head of the list plus anything watched.
+    ///
+    /// Deliberately narrower than `refreshTargets`. Rows load their jobs on appear, so
+    /// scrolling the whole list would otherwise leave 20 pushes eligible for every tick —
+    /// ~40 requests a minute against a shared public service, forever, in the background.
+    /// Capping the automatic path keeps the steady state at `eagerPushCount` + watched.
+    private func pollTargets(from candidates: [Push]) -> [Push] {
+        candidates.enumerated()
+            .filter { index, push in
+                index < eagerPushCount || watchedPushIds.contains(push.id)
+            }
+            .map(\.element)
+    }
+
+    /// What an explicit pull-to-refresh re-reads: everything already on screen.
+    ///
+    /// Wider than `pollTargets` on purpose. A manual pull is user-initiated and
+    /// infrequent, and a push the user has scrolled to and is looking at should update
+    /// when they ask it to — that staleness is the whole bug this change exists to fix.
+    private func refreshTargets(from candidates: [Push]) -> [Push] {
         candidates.enumerated()
             .filter { index, push in
                 index < eagerPushCount
@@ -299,61 +316,5 @@ final class DashboardViewModel {
         return byKey.map { key, val in
             FailureGroup(id: key, pattern: key, affectedJobCount: val.jobs.count, exampleLine: val.first)
         }.sorted { $0.affectedJobCount > $1.affectedJobCount }
-    }
-
-    // MARK: - Actions
-
-    func retrigger(job: Job) async throws {
-        try await TreeHerderService.shared.retriggerJob(jobId: job.id)
-    }
-
-    /// Retriggers every failed job concurrently.
-    ///
-    /// This used to be a serial `for` loop of POSTs — on a push with 24 failures and a
-    /// ~300 ms round trip that is about 7 seconds of the user staring at an unchanged
-    /// screen. Requests now overlap, bounded so we don't open two dozen sockets at once.
-    /// Returns the number that succeeded.
-    @discardableResult
-    func retriggerAllFailed(for push: Push, maxConcurrent: Int = 6) async -> (succeeded: Int, failed: Int) {
-        let failed = (jobsByPush[push.id] ?? []).filter { $0.result.isFailure && $0.state == .completed }
-        guard !failed.isEmpty else { return (0, 0) }
-
-        let results = await withTaskGroup(of: Bool.self) { group -> (Int, Int) in
-            var iterator = failed.makeIterator()
-            var inFlight = 0
-
-            while inFlight < maxConcurrent, let job = iterator.next() {
-                group.addTask { await Self.attemptRetrigger(jobId: job.id) }
-                inFlight += 1
-            }
-
-            var ok = 0, bad = 0
-            while let didSucceed = await group.next() {
-                didSucceed ? (ok += 1) : (bad += 1)
-                if let job = iterator.next() {
-                    group.addTask { await Self.attemptRetrigger(jobId: job.id) }
-                }
-            }
-            return (ok, bad)
-        }
-
-        emit(results.1 == 0 ? .retriggered : .actionFailed)
-
-        // Retriggers create new job rows; force a full re-read so they appear.
-        watermarks.removeValue(forKey: push.id)
-        jobsByPush.removeValue(forKey: push.id)
-        summaries.removeValue(forKey: push.id)
-        await loadJobs(for: push, force: false)
-
-        return results
-    }
-
-    private nonisolated static func attemptRetrigger(jobId: Int) async -> Bool {
-        do {
-            try await TreeHerderService.shared.retriggerJob(jobId: jobId)
-            return true
-        } catch {
-            return false
-        }
     }
 }
