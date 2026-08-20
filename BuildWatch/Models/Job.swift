@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-enum JobResult: String, Codable, Sendable, CaseIterable {
+nonisolated enum JobResult: String, Codable, Sendable, CaseIterable {
     case success
     case testfailed
     case busted
@@ -12,12 +12,12 @@ enum JobResult: String, Codable, Sendable, CaseIterable {
 
     var color: Color {
         switch self {
-        case .success:    Color(red: 0.25, green: 0.88, blue: 0.69)
-        case .testfailed: Color(red: 1.0,  green: 0.31, blue: 0.37)
-        case .busted:     Color(red: 1.0,  green: 0.58, blue: 0.0)
-        case .exception:  Color.purple
-        case .retry:      Color.yellow
-        case .usercancel, .unknown: Color(uiColor: .systemGray3)
+        case .success:    StatusPalette.success
+        case .testfailed: StatusPalette.failed
+        case .busted:     StatusPalette.busted
+        case .exception:  StatusPalette.exception
+        case .retry:      StatusPalette.retry
+        case .usercancel, .unknown: StatusPalette.idle
         }
     }
 
@@ -50,11 +50,11 @@ enum JobResult: String, Codable, Sendable, CaseIterable {
     }
 }
 
-enum JobState: String, Codable, Sendable {
+nonisolated enum JobState: String, Codable, Sendable {
     case pending, running, completed
 }
 
-struct Job: Identifiable, Codable, Sendable {
+nonisolated struct Job: Identifiable, Codable, Sendable {
     let id: Int
     let pushId: Int
     let taskId: String?
@@ -80,9 +80,27 @@ struct Job: Identifiable, Codable, Sendable {
     }
 
     var durationString: String? {
-        guard let d = duration else { return nil }
-        let minutes = Int(d / 60)
-        let seconds = Int(d.truncatingRemainder(dividingBy: 60))
+        duration.map(Self.format)
+    }
+
+    /// Wall-clock time a still-running job has been going, measured from its start stamp.
+    /// A running job previously showed no timing at all, so "stuck for 40 minutes" and
+    /// "started 20 seconds ago" were indistinguishable at a glance.
+    func elapsed(asOf now: Date = Date()) -> TimeInterval? {
+        guard state == .running, let start = startDate else { return nil }
+        let seconds = now.timeIntervalSince(start)
+        return seconds > 0 ? seconds : nil
+    }
+
+    func elapsedString(asOf now: Date = Date()) -> String? {
+        elapsed(asOf: now).map(Self.format)
+    }
+
+    private static func format(_ interval: TimeInterval) -> String {
+        let total = Int(interval)
+        let minutes = total / 60
+        let seconds = total % 60
+        if minutes >= 60 { return "\(minutes / 60)h \(minutes % 60)m" }
         return minutes == 0 ? "\(seconds)s" : "\(minutes)m \(seconds)s"
     }
 
@@ -96,30 +114,66 @@ struct Job: Identifiable, Codable, Sendable {
     var platformDisplay: String {
         platformOption.isEmpty ? platform : "\(platform) \(platformOption)"
     }
+
+    /// Spoken status, so VoiceOver conveys what the coloured glyph conveys visually.
+    var statusDescription: String {
+        switch state {
+        case .pending:   "pending"
+        case .running:   elapsedString().map { "running for \($0)" } ?? "running"
+        case .completed: durationString.map { "\(result.displayName), took \($0)" } ?? result.displayName
+        }
+    }
+
+    var accessibilityLabel: String {
+        "\(jobTypeName), \(platformDisplay), \(statusDescription)"
+    }
 }
 
-struct PlatformGroup: Identifiable, Sendable {
+nonisolated struct PlatformGroup: Identifiable, Sendable {
     let platform: String
     let option: String
-    var jobs: [Job]
+    let jobs: [Job]
+
+    // Counts are resolved once at construction. They were previously computed properties,
+    // so a single group header re-filtered its whole job array four times on every frame.
+    let failureCount: Int
+    let pendingCount: Int
+    let runningCount: Int
+    let successCount: Int
+
+    init(platform: String, option: String, jobs: [Job]) {
+        self.platform = platform
+        self.option = option
+        self.jobs = jobs
+
+        var failures = 0, pending = 0, running = 0, successes = 0
+        for job in jobs {
+            switch job.state {
+            case .pending: pending += 1
+            case .running: running += 1
+            case .completed:
+                if job.result.isFailure      { failures += 1 }
+                else if job.result == .success { successes += 1 }
+            }
+        }
+        failureCount = failures
+        pendingCount = pending
+        runningCount = running
+        successCount = successes
+    }
 
     var id: String { "\(platform)-\(option)" }
     var displayName: String { option.isEmpty ? platform : "\(platform) \(option)" }
-
-    var failureCount: Int { jobs.filter { $0.result.isFailure && $0.state == .completed }.count }
-    var pendingCount:  Int { jobs.filter { $0.isPending }.count }
-    var runningCount:  Int { jobs.filter { $0.isRunning }.count }
-    var successCount:  Int { jobs.filter { $0.result == .success && $0.state == .completed }.count }
 
     enum OverallStatus {
         case passing, failing, running, pending
 
         var color: Color {
             switch self {
-            case .passing:  Color(red: 0.25, green: 0.88, blue: 0.69)
-            case .failing:  Color(red: 1.0,  green: 0.31, blue: 0.37)
-            case .running:  Color.blue
-            case .pending:  Color(uiColor: .systemGray3)
+            case .passing:  StatusPalette.success
+            case .failing:  StatusPalette.failed
+            case .running:  StatusPalette.running
+            case .pending:  StatusPalette.idle
             }
         }
 
@@ -131,6 +185,27 @@ struct PlatformGroup: Identifiable, Sendable {
             case .pending:  "clock.fill"
             }
         }
+
+        /// Distinct silhouettes for the status dots, used when the reader has asked the
+        /// system to differentiate without colour. The dots were previously identical
+        /// circles, so status was carried by hue alone.
+        var dotSymbol: String {
+            switch self {
+            case .passing:  "checkmark"
+            case .failing:  "xmark"
+            case .running:  "circle.dotted"
+            case .pending:  "minus"
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .passing:  "passing"
+            case .failing:  "failing"
+            case .running:  "running"
+            case .pending:  "pending"
+            }
+        }
     }
 
     var overallStatus: OverallStatus {
@@ -138,5 +213,14 @@ struct PlatformGroup: Identifiable, Sendable {
         if runningCount > 0 { return .running }
         if pendingCount > 0 { return .pending }
         return .passing
+    }
+
+    var accessibilityLabel: String {
+        var parts = ["\(displayName), \(overallStatus.description)"]
+        if failureCount > 0 { parts.append("\(failureCount) failed") }
+        if runningCount > 0 { parts.append("\(runningCount) running") }
+        if pendingCount > 0 { parts.append("\(pendingCount) pending") }
+        if successCount > 0 { parts.append("\(successCount) passed") }
+        return parts.joined(separator: ", ")
     }
 }

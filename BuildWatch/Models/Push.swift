@@ -1,6 +1,6 @@
 import Foundation
 
-struct Push: Identifiable, Codable, Sendable {
+nonisolated struct Push: Identifiable, Codable, Sendable {
     let id: Int
     let revision: String
     let author: String
@@ -48,7 +48,7 @@ struct Push: Identifiable, Codable, Sendable {
     }
 }
 
-struct PushRevision: Identifiable, Codable, Sendable {
+nonisolated struct PushRevision: Identifiable, Codable, Sendable {
     var id: String { revision }
     let revision: String
     let author: String
@@ -65,6 +65,6 @@ struct PushRevision: Identifiable, Codable, Sendable {
     }
 }
 
-struct PushesResponse: Decodable, Sendable {
+nonisolated struct PushesResponse: Decodable, Sendable {
     let results: [Push]
 }
