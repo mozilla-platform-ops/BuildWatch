@@ -95,7 +95,7 @@ struct SettingsView: View {
             HStack {
                 Text("Version")
                 Spacer()
-                Text("1.0.0").foregroundStyle(.secondary)
+                Text(Self.versionString).foregroundStyle(.secondary)
             }
 
             Link(destination: URL(string: "https://treeherder.mozilla.org")!) {
@@ -117,6 +117,16 @@ struct SettingsView: View {
     }
 
     // MARK: - Helpers
+
+    /// Read from the bundle rather than hardcoded. The literal that used to live here said
+    /// "1.0.0" no matter what was installed, which made a TestFlight build indistinguishable
+    /// from the App Store one — including to whoever was trying to work out which was which.
+    private static let versionString: String = {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "—"
+        guard let build = info?["CFBundleVersion"] as? String else { return short }
+        return "\(short) (\(build))"
+    }()
 
     private func checkNotificationStatus() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()

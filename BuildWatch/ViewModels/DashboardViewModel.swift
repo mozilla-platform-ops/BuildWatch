@@ -281,11 +281,25 @@ final class DashboardViewModel {
 
     // MARK: - Failure Lines
 
+    /// How many failed jobs the Failure Summary pulls logs for. One request per job, so this
+    /// is a deliberate ceiling on a burst against a shared public service — but it means a
+    /// push with more failures than this is *sampled*, not summarised. `failureSample`
+    /// reports that so the sheet can say so out loud instead of presenting a truncated
+    /// count as the whole picture.
+    static let failureLogSampleLimit = 15
+
+    /// `(sampled, total)` failed jobs for a push. `sampled < total` means the cap bit.
+    func failureSample(for push: Push) -> (sampled: Int, total: Int) {
+        let total = (jobsByPush[push.id] ?? [])
+            .count { $0.result.isFailure && $0.state == .completed }
+        return (min(total, Self.failureLogSampleLimit), total)
+    }
+
     func fetchFailureLines(for push: Push) async {
         guard failureLinesByPush[push.id] == nil else { return }
         let failed = Array((jobsByPush[push.id] ?? [])
             .filter { $0.result.isFailure && $0.state == .completed }
-            .prefix(15))
+            .prefix(Self.failureLogSampleLimit))
         guard !failed.isEmpty else {
             failureLinesByPush[push.id] = []
             return

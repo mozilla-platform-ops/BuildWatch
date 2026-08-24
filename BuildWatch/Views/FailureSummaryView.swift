@@ -22,9 +22,19 @@ struct FailureSummaryView: View {
                         description: Text("TreeHerder has no structured error data for these jobs yet.")
                     )
                 } else {
-                    Section("\(groups.count) distinct failure\(groups.count == 1 ? "" : "s")") {
+                    let sample = viewModel.failureSample(for: push)
+                    Section {
                         ForEach(groups) { group in
                             FailureGroupRow(group: group)
+                        }
+                    } header: {
+                        Text("\(groups.count) distinct failure\(groups.count == 1 ? "" : "s")")
+                    } footer: {
+                        // Say it when the sample is partial. The per-group job counts are
+                        // capped by the sample too, so without this a group that really hit
+                        // 40 jobs reads as though it hit 15.
+                        if sample.sampled < sample.total {
+                            Text("From the first \(sample.sampled) of \(sample.total) failed jobs. Job counts above are limited to that sample.")
                         }
                     }
                 }
