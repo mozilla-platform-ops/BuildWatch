@@ -1,6 +1,6 @@
 import Foundation
 
-struct TextLogError: Decodable, Identifiable {
+nonisolated struct TextLogError: Decodable, Identifiable {
     let id: Int
     let line: String
     let lineNumber: Int
@@ -23,7 +23,7 @@ struct TextLogError: Decodable, Identifiable {
     }
 }
 
-struct FailureGroup: Identifiable {
+nonisolated struct FailureGroup: Identifiable {
     let id: String
     let pattern: String
     let affectedJobCount: Int

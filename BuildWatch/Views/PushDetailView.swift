@@ -4,10 +4,6 @@ struct PushDetailView: View {
     let push: Push
     @Environment(DashboardViewModel.self) private var viewModel
     @State private var selectedFilter: JobFilter = .all
-    @State private var showRetriggerAlert = false
-    @State private var jobToRetrigger: Job?
-    @State private var isRetriggering = false
-    @State private var actionError: String?
     @State private var safariURL: SafariURL?
     @State private var showFailureSummary = false
 
@@ -25,6 +21,11 @@ struct PushDetailView: View {
         }
     }
 
+    private var summary: PushSummary? { viewModel.summary(for: push) }
+    private var failedJobs: [Job] {
+        (viewModel.jobsByPush[push.id] ?? []).filter { $0.result.isFailure && $0.state == .completed }
+    }
+
     var body: some View {
         List {
             pushHeader
@@ -36,24 +37,11 @@ struct PushDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { filterToolbar }
         .task { await viewModel.fetchJobs(for: push) }
+        .refreshable { await viewModel.poll() }
         .sheet(item: $safariURL) { item in SafariView(url: item.url) }
         .sheet(isPresented: $showFailureSummary) {
             FailureSummaryView(push: push)
                 .environment(viewModel)
-        }
-        .alert("Retrigger Job?", isPresented: $showRetriggerAlert, presenting: jobToRetrigger) { job in
-            Button("Retrigger") { Task { await retrigger(job: job) } }
-            Button("Cancel", role: .cancel) {}
-        } message: { job in
-            Text("Retrigger \"\(job.jobTypeName)\" on \(job.platformDisplay)?")
-        }
-        .alert("Error", isPresented: .init(
-            get: { actionError != nil },
-            set: { if !$0 { actionError = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(actionError ?? "")
         }
     }
 
@@ -82,20 +70,22 @@ struct PushDetailView: View {
                             Text(String(revision.revision.prefix(12)))
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
+                                .accessibilityLabel("Revision \(String(revision.revision.prefix(12)))")
 
                             if let bugNum = revision.bugNumber {
                                 Button("Bug \(bugNum)") {
                                     safariURL = SafariURL(url: URL(string: "https://bugzilla.mozilla.org/show_bug.cgi?id=\(bugNum)")!)
                                 }
                                 .font(.caption)
+                                .accessibilityHint("Opens Bugzilla")
                             }
                         }
                     }
                     .padding(.vertical, 2)
                 }
 
-                if let jobs = viewModel.jobsByPush[push.id] {
-                    PushSummaryBar(jobs: jobs)
+                if let summary {
+                    PushSummaryBar(summary: summary)
                 }
             }
             .padding(.vertical, 4)
@@ -106,14 +96,6 @@ struct PushDetailView: View {
 
     private var actionsSection: some View {
         Section("Quick Actions") {
-            Button {
-                Task { await retriggerAllFailed() }
-            } label: {
-                Label("Retrigger All Failed", systemImage: "arrow.clockwise")
-            }
-            .disabled((viewModel.jobsByPush[push.id] ?? []).filter { $0.result.isFailure }.isEmpty)
-
-            let failedJobs = (viewModel.jobsByPush[push.id] ?? []).filter { $0.result.isFailure && $0.state == .completed }
             Button {
                 showFailureSummary = true
             } label: {
@@ -143,12 +125,14 @@ struct PushDetailView: View {
     private var jobsSection: some View {
         let groups = filteredGroups
 
-        if viewModel.jobsByPush[push.id] == nil {
+        if summary == nil {
             Section {
                 HStack {
                     ProgressView()
                     Text("Loading jobs…").foregroundStyle(.secondary)
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Loading jobs")
             }
         } else if groups.isEmpty {
             Section {
@@ -161,10 +145,7 @@ struct PushDetailView: View {
             ForEach(groups) { group in
                 Section {
                     ForEach(filteredJobs(in: group)) { job in
-                        JobRowView(job: job) {
-                            jobToRetrigger = job
-                            showRetriggerAlert = true
-                        }
+                        JobRowView(job: job)
                     }
                 } header: {
                     PlatformGroupHeader(group: group)
@@ -176,7 +157,7 @@ struct PushDetailView: View {
     // MARK: - Filtering
 
     private var filteredGroups: [PlatformGroup] {
-        viewModel.platformGroups(for: push).filter { group in
+        (summary?.groups ?? []).filter { group in
             switch selectedFilter {
             case .all:      return true
             case .failures: return group.failureCount > 0
@@ -204,6 +185,7 @@ struct PushDetailView: View {
                 }
             }
             .pickerStyle(.menu)
+            .accessibilityLabel("Filter jobs")
         }
     }
 
@@ -222,61 +204,25 @@ struct PushDetailView: View {
         }
         return nil
     }
-
-    private func retrigger(job: Job) async {
-        isRetriggering = true
-        defer { isRetriggering = false }
-        do {
-            try await viewModel.retrigger(job: job)
-        } catch {
-            actionError = error.localizedDescription
-        }
-    }
-
-    private func retriggerAllFailed() async {
-        let failed = (viewModel.jobsByPush[push.id] ?? []).filter { $0.result.isFailure }
-        for job in failed {
-            try? await viewModel.retrigger(job: job)
-        }
-        viewModel.jobsByPush.removeValue(forKey: push.id)
-        await viewModel.fetchJobs(for: push)
-    }
 }
 
 // MARK: - Job Row
 
 struct JobRowView: View {
     let job: Job
-    var onRetrigger: (() -> Void)? = nil
     @State private var safariURL: SafariURL?
 
     var body: some View {
         HStack(spacing: 10) {
-            Group {
-                if job.state == .running {
-                    Image(systemName: "gearshape.fill")
-                        .foregroundStyle(.blue)
-                        .symbolEffect(.rotate)
-                } else if job.state == .pending {
-                    Image(systemName: "clock.fill")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Image(systemName: job.result.systemImage)
-                        .foregroundStyle(job.result.color)
-                }
-            }
-            .frame(width: 20)
+            statusGlyph
+                .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(job.jobTypeName)
                     .font(.subheadline)
                     .lineLimit(1)
 
-                if let duration = job.durationString {
-                    Text(duration)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                timingLabel
             }
 
             Spacer()
@@ -289,36 +235,70 @@ struct JobRowView: View {
 
             if let taskId = job.taskId {
                 Button {
-                    safariURL = SafariURL(url: URL(string: "https://firefox-ci-tc.services.mozilla.com/tasks/\(taskId)")!)
+                    safariURL = SafariURL(url: taskURL(taskId))
                 } label: {
                     Image(systemName: "arrow.up.right.square")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Open \(job.jobTypeName) in Taskcluster")
             }
         }
-        .swipeActions(edge: .trailing) {
-            if let onRetrigger {
-                Button {
-                    onRetrigger()
-                } label: {
-                    Label("Retrigger", systemImage: "arrow.clockwise")
-                }
-                .tint(.blue)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(job.accessibilityLabel)
+        .accessibilityActions {
+            if let taskId = job.taskId {
+                Button("Open in Taskcluster") { safariURL = SafariURL(url: taskURL(taskId)) }
             }
         }
         .contextMenu {
             if let taskId = job.taskId {
-                Button("Open in Taskcluster") {
-                    safariURL = SafariURL(url: URL(string: "https://firefox-ci-tc.services.mozilla.com/tasks/\(taskId)")!)
-                }
-            }
-            if let onRetrigger {
-                Button("Retrigger") { onRetrigger() }
+                Button("Open in Taskcluster") { safariURL = SafariURL(url: taskURL(taskId)) }
             }
         }
         .sheet(item: $safariURL) { item in SafariView(url: item.url) }
+    }
+
+    @ViewBuilder
+    private var statusGlyph: some View {
+        switch job.state {
+        case .running:
+            Image(systemName: "gearshape.fill")
+                .foregroundStyle(StatusPalette.running)
+                .symbolEffect(.rotate)
+        case .pending:
+            Image(systemName: "clock.fill")
+                .foregroundStyle(.secondary)
+        case .completed:
+            Image(systemName: job.result.systemImage)
+                .foregroundStyle(job.result.color)
+        }
+    }
+
+    /// Completed jobs show their duration; running jobs now tick their elapsed time once a
+    /// second. Previously a running job showed no timing at all, so a job 20 seconds in and
+    /// a job wedged for 40 minutes looked exactly the same.
+    @ViewBuilder
+    private var timingLabel: some View {
+        if job.state == .running {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                if let elapsed = job.elapsedString(asOf: context.date) {
+                    Text(elapsed)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(StatusPalette.running)
+                        .contentTransition(.numericText())
+                }
+            }
+        } else if let duration = job.durationString {
+            Text(duration)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func taskURL(_ taskId: String) -> URL {
+        URL(string: "https://firefox-ci-tc.services.mozilla.com/tasks/\(taskId)")!
     }
 }
 
@@ -340,45 +320,51 @@ struct PlatformGroupHeader: View {
             HStack(spacing: 8) {
                 if group.failureCount > 0 {
                     Label("\(group.failureCount)", systemImage: "xmark")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(StatusPalette.failed)
                 }
                 if group.runningCount > 0 {
                     Label("\(group.runningCount)", systemImage: "gearshape.fill")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(StatusPalette.running)
                 }
                 if group.successCount > 0 {
                     Label("\(group.successCount)", systemImage: "checkmark")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(StatusPalette.success)
                 }
             }
             .font(.caption.weight(.medium))
             .labelStyle(.titleAndIcon)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(group.accessibilityLabel)
     }
 }
 
 // MARK: - Push Summary Bar
 
 struct PushSummaryBar: View {
-    let jobs: [Job]
-
-    private var successCount: Int { jobs.filter { $0.result == .success }.count }
-    private var failureCount: Int { jobs.filter { $0.result.isFailure }.count }
-    private var runningCount: Int { jobs.filter { $0.isRunning }.count }
-    private var pendingCount: Int { jobs.filter { $0.isPending }.count }
-    private var total: Int { jobs.count }
+    let summary: PushSummary
 
     var body: some View {
         HStack(spacing: 12) {
-            chip(count: successCount, color: .green,     icon: "checkmark.circle.fill")
-            chip(count: failureCount, color: .red,       icon: "xmark.circle.fill")
-            chip(count: runningCount, color: .blue,      icon: "gearshape.fill")
-            chip(count: pendingCount, color: .secondary, icon: "clock.fill")
+            chip(count: summary.successCount, color: StatusPalette.success, icon: "checkmark.circle.fill")
+            chip(count: summary.failureCount, color: StatusPalette.failed,  icon: "xmark.circle.fill")
+            chip(count: summary.runningCount, color: StatusPalette.running, icon: "gearshape.fill")
+            chip(count: summary.pendingCount, color: .secondary,            icon: "clock.fill")
             Spacer()
-            Text("\(total) jobs")
+            Text(totalLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(summary.accessibilityLabel)
+    }
+
+    /// Tier 2+ is called out rather than folded in, because the platform groups below
+    /// only list tier 1.
+    private var totalLabel: String {
+        summary.lowerTierTotal > 0
+            ? "\(summary.totalCount) jobs · +\(summary.lowerTierTotal) tier 2"
+            : "\(summary.totalCount) jobs"
     }
 
     private func chip(count: Int, color: Color, icon: String) -> some View {
@@ -386,7 +372,8 @@ struct PushSummaryBar: View {
             Image(systemName: icon)
             Text("\(count)")
         }
-        .font(.caption.weight(.semibold))
+        .font(.caption.weight(.semibold).monospacedDigit())
         .foregroundStyle(count > 0 ? color : Color(uiColor: .systemGray4))
+        .contentTransition(.numericText())
     }
 }
