@@ -25,7 +25,18 @@ nonisolated struct PushSummary: Sendable {
     let lowerTierTotal: Int
     let lowerTierFailures: Int
 
-    var isRunning: Bool { runningCount > 0 || pendingCount > 0 }
+    /// Tier 2+ jobs still running or pending.
+    ///
+    /// Counted because completion has to account for them even though the dots and the
+    /// platform groups deliberately don't. Tier 2 is not a rounding error: across 30
+    /// consecutive real try pushes every single one carried tier-2 jobs, and one of them
+    /// was 209 tier-1 against 545 tier-2. Leaving these out of `isRunning` meant a push
+    /// was declared finished the moment its tier-1 jobs landed — firing "Try push passed"
+    /// with hundreds of jobs still going, and consuming the one-shot watch so no
+    /// correction ever arrived.
+    let lowerTierActive: Int
+
+    var isRunning: Bool { runningCount > 0 || pendingCount > 0 || lowerTierActive > 0 }
     var hasJobs: Bool { totalCount > 0 || lowerTierTotal > 0 }
     var isComplete: Bool { hasJobs && !isRunning }
 
@@ -34,12 +45,15 @@ nonisolated struct PushSummary: Sendable {
     init(jobs: [Job]) {
         var byPlatform: [String: [Job]] = [:]
         var failures = 0, running = 0, pending = 0, successes = 0, total = 0
-        var otherTotal = 0, otherFailures = 0
+        var otherTotal = 0, otherFailures = 0, otherActive = 0
 
         for job in jobs {
             guard job.tier == 1 else {
                 otherTotal += 1
-                if job.state == .completed && job.result.isFailure { otherFailures += 1 }
+                switch job.state {
+                case .running, .pending: otherActive += 1
+                case .completed:         if job.result.isFailure { otherFailures += 1 }
+                }
                 continue
             }
 
@@ -66,6 +80,7 @@ nonisolated struct PushSummary: Sendable {
         totalCount     = total
         lowerTierTotal = otherTotal
         lowerTierFailures = otherFailures
+        lowerTierActive = otherActive
     }
 
     /// Spoken summary for the push row, so a VoiceOver user hears the same thing the
@@ -79,6 +94,7 @@ nonisolated struct PushSummary: Sendable {
         if successCount > 0 { parts.append("\(successCount) passed") }
         if parts.isEmpty { parts.append("\(totalCount) jobs") }
         if lowerTierFailures > 0 { parts.append("\(lowerTierFailures) tier 2 failed") }
+        if lowerTierActive > 0 { parts.append("\(lowerTierActive) tier 2 still running") }
         return parts.joined(separator: ", ")
     }
 }
