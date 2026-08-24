@@ -228,6 +228,29 @@ scale with Dynamic Type. Loading shimmer respects *Reduce Motion*.
 - **Haptics** — distinct feedback for refresh, watch, pass, and fail.
 - **Retrigger removed** rather than left failing silently.
 
+### Correctness fixes on top
+
+**Tier-2 jobs now count toward completion.** `PushSummary` gates its counting loop on
+`tier == 1`, so tier-2 jobs still running were invisible to `isComplete` — while the
+completion notification's failure count *did* include tier-2 failures. A push could be
+declared finished with tier-2 work still going, firing "Try push passed" early, and because
+the watch is one-shot no correction followed.
+
+Measured by reconstructing job end timestamps across 17 fully-completed real try pushes:
+**2 of them (12%)** had a window where every tier-1 job was done and tier-2 was not — 6.3
+and 14.3 minutes wide. Tier 2 is not a rounding error either; all 30 pushes sampled carried
+tier-2 jobs, and one was 209 tier-1 against 545 tier-2. The dots and platform groups stay
+tier-1-only, which was always the intent — only completion changes.
+
+**The About screen reads the bundle.** It previously showed a hardcoded `1.0.0` whatever was
+installed, which made a TestFlight build indistinguishable from the App Store one.
+
+**Failure Summary admits when it's sampling.** It pulls logs for the first 15 failed jobs —
+one request each, a deliberate ceiling on a burst against a shared public service — but
+rendered the result as though it were complete. Per-group counts are bounded by that sample,
+so a test that really hit 40 jobs read as "15 jobs". The sheet now says so when the sample is
+partial.
+
 ### Benchmarks
 
 `Benchmarks/ParserBenchmark.swift` is a standalone executable that runs the old and new
