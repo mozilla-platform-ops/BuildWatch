@@ -36,13 +36,22 @@ nonisolated struct PushSummary: Sendable {
     /// correction ever arrived.
     let lowerTierActive: Int
 
+    /// When this push is expected to finish. `nil` once it has, or when there isn't yet
+    /// enough of it visible to say anything — see `PushETA.Confidence`.
+    ///
+    /// Estimated here, at ingest, rather than in a view: it is derived state like every
+    /// other field on this type, and it walks the whole job array to do it.
+    let eta: PushETA?
+
     var isRunning: Bool { runningCount > 0 || pendingCount > 0 || lowerTierActive > 0 }
     var hasJobs: Bool { totalCount > 0 || lowerTierTotal > 0 }
     var isComplete: Bool { hasJobs && !isRunning }
 
-    static let empty = PushSummary(jobs: [])
+    static let empty = PushSummary(jobs: [], pushedAt: nil)
 
-    init(jobs: [Job]) {
+    /// - Parameter pushedAt: when the push landed, needed to draw elapsed against
+    ///   remaining. Omit it and no ETA is produced.
+    init(jobs: [Job], pushedAt: Date?, now: Date = Date()) {
         var byPlatform: [String: [Job]] = [:]
         var failures = 0, running = 0, pending = 0, successes = 0, total = 0
         var otherTotal = 0, otherFailures = 0, otherActive = 0
@@ -51,7 +60,7 @@ nonisolated struct PushSummary: Sendable {
             guard job.tier == 1 else {
                 otherTotal += 1
                 switch job.state {
-                case .running, .pending: otherActive += 1
+                case .running, .pending, .unscheduled: otherActive += 1
                 case .completed:         if job.result.isFailure { otherFailures += 1 }
                 }
                 continue
@@ -59,7 +68,7 @@ nonisolated struct PushSummary: Sendable {
 
             total += 1
             switch job.state {
-            case .pending: pending += 1
+            case .pending, .unscheduled: pending += 1
             case .running: running += 1
             case .completed:
                 if job.result.isFailure        { failures += 1 }
@@ -81,6 +90,12 @@ nonisolated struct PushSummary: Sendable {
         lowerTierTotal = otherTotal
         lowerTierFailures = otherFailures
         lowerTierActive = otherActive
+
+        // Every tier counts here. Tier 2 is not a rounding error — one sampled push ran
+        // 209 tier-1 jobs against 545 tier-2 — and an ETA that ignored it would promise a
+        // finish while hundreds of jobs were still queued, exactly the bug that made
+        // `isComplete` count all tiers in the first place.
+        eta = pushedAt.flatMap { PushETA(jobs: jobs, pushedAt: $0, now: now) }
     }
 
     /// Spoken summary for the push row, so a VoiceOver user hears the same thing the

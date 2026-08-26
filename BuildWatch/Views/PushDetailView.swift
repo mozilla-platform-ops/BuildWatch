@@ -28,6 +28,7 @@ struct PushDetailView: View {
 
     var body: some View {
         List {
+            etaSection
             pushHeader
             actionsSection
             jobsSection
@@ -42,6 +43,17 @@ struct PushDetailView: View {
         .sheet(isPresented: $showFailureSummary) {
             FailureSummaryView(push: push)
                 .environment(viewModel)
+        }
+    }
+
+    // MARK: - ETA
+
+    /// First thing on the screen when a push is still going, and gone the moment it isn't —
+    /// a finished push has no ETA, and `PushETA` returns nil rather than a stale one.
+    @ViewBuilder
+    private var etaSection: some View {
+        if let eta = summary?.eta, let summary {
+            Section { PushETACard(eta: eta, summary: summary) }
         }
     }
 
@@ -270,6 +282,11 @@ struct JobRowView: View {
         case .pending:
             Image(systemName: "clock.fill")
                 .foregroundStyle(.secondary)
+        case .unscheduled:
+            // Distinct from pending: this one isn't even in a queue yet, it's waiting on
+            // a dependency. Worth telling apart when you're wondering why nothing moves.
+            Image(systemName: "clock.badge.questionmark.fill")
+                .foregroundStyle(.tertiary)
         case .completed:
             Image(systemName: job.result.systemImage)
                 .foregroundStyle(job.result.color)
