@@ -32,7 +32,6 @@ final class DashboardViewModel {
 
     var pushes: [Push] = []
     var jobsByPush: [Int: [Job]] = [:]
-    var failureLinesByPush: [Int: [TextLogError]] = [:]
     var isRefreshing = false
     var errorMessage: String?
     var lastRefresh: Date?
@@ -50,17 +49,74 @@ final class DashboardViewModel {
     /// How many pushes get their jobs loaded eagerly on the list screen.
     private let eagerPushCount = 5
 
+    /// Push Health per push: the row summary, and the full report once a push is opened.
+    private(set) var healthSummaries: [Int: HealthSummary] = [:]
+    private(set) var healths: [Int: PushHealth] = [:]
+
+    /// Per failed job, fetched when its card is opened.
+    private(set) var suggestions: [Int: [BugSuggestion]] = [:]
+    private(set) var jobDetails: [Int: JobDetail] = [:]
+    /// The first failing test in a job's log, for naming "Seen before" failures. A job
+    /// whose log names no test maps to "".
+    private(set) var firstFailingTest: [Int: String] = [:]
+
+    /// People whose pushes were looked at, newest first, as on the web's picker.
+    private(set) var people: [Person] = []
+
+    /// Whose pushes the list shows. Stored under the key Settings used, so an existing
+    /// install keeps its address.
+    private(set) var username: String
+
+    private let gate = RequestGate(limit: 4)
+
     init() {
         let stored = UserDefaults.standard.array(forKey: "watchedPushIds") as? [Int] ?? []
         watchedPushIds = Set(stored)
+        username = UserDefaults.standard.string(forKey: "username") ?? ""
+        if let data = UserDefaults.standard.data(forKey: "people"),
+           let saved = try? JSONDecoder().decode([Person].self, from: data) {
+            people = saved
+        }
     }
 
-    var username: String {
-        UserDefaults.standard.string(forKey: "username") ?? ""
+    // MARK: - Author
+
+    func show(author: String) {
+        let email = author.trimmingCharacters(in: .whitespaces).lowercased()
+        guard email.contains("@"), email != username else { return }
+        username = email
+        UserDefaults.standard.set(email, forKey: "username")
+        pushes = []
+        errorMessage = nil
+        Task { await refresh() }
     }
 
-    var usernameHandle: String {
-        username.components(separatedBy: "@").first.flatMap { $0.isEmpty ? nil : $0 } ?? "Try"
+    /// The pusher's name, from their commits, once a push of theirs has loaded.
+    var authorName: String? {
+        pushes.first { $0.author.lowercased() == username }?.authorName
+    }
+
+    func personName(_ email: String) -> String? {
+        people.first { $0.email == email }?.name
+    }
+
+    func rememberPerson(_ email: String, name: String?) {
+        let key = email.lowercased()
+        guard key.contains("@") else { return }
+        let known = people.first { $0.email == key }
+        let person = Person(email: key, name: name ?? known?.name)
+        guard people.first != person else { return }
+        people = Array(([person] + people.filter { $0.email != key }).prefix(8))
+        savePeople()
+    }
+
+    func clearPeople() {
+        people = []
+        savePeople()
+    }
+
+    private func savePeople() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(people), forKey: "people")
     }
 
     // MARK: - Derived State
@@ -164,8 +220,14 @@ final class DashboardViewModel {
             let fetched = try await TreeHerderService.shared.fetchPushes(count: 20, author: author)
             pushes = fetched
             lastRefresh = Date()
+            if let own = fetched.first(where: { $0.author.lowercased() == username }) {
+                rememberPerson(username, name: own.authorName)
+            }
 
-            await refreshJobs(for: refreshTargets(from: fetched))
+            let targets = refreshTargets(from: fetched)
+            async let summaries: Void = refreshHealthSummaries(for: targets)
+            await refreshJobs(for: targets)
+            await summaries
             emit(.refreshed)
         } catch {
             errorMessage = error.localizedDescription
@@ -177,7 +239,10 @@ final class DashboardViewModel {
     /// pull-to-refresh spinner.
     func poll() async {
         guard !isRefreshing, !pushes.isEmpty else { return }
-        await refreshJobs(for: pollTargets(from: pushes))
+        let targets = pollTargets(from: pushes)
+        async let summaries: Void = refreshHealthSummaries(for: targets)
+        await refreshJobs(for: targets)
+        await summaries
     }
 
     /// What the 30-second timer re-reads: the head of the list plus anything watched.
@@ -223,6 +288,11 @@ final class DashboardViewModel {
     func fetchJobs(for push: Push) async {
         guard summaries[push.id] == nil else { return }
         await loadJobs(for: push, force: false)
+    }
+
+    /// Re-reads one push's jobs, as a delta when it has been read before.
+    func reload(_ push: Push) async {
+        await loadJobs(for: push, force: true)
     }
 
     private func loadJobs(for push: Push, force: Bool) async {
@@ -279,56 +349,76 @@ final class DashboardViewModel {
         return merged
     }
 
-    // MARK: - Failure Lines
+    // MARK: - Push Health
 
-    /// How many failed jobs the Failure Summary pulls logs for. One request per job, so this
-    /// is a deliberate ceiling on a burst against a shared public service — but it means a
-    /// push with more failures than this is *sampled*, not summarised. `failureSample`
-    /// reports that so the sheet can say so out loud instead of presenting a truncated
-    /// count as the whole picture.
-    static let failureLogSampleLimit = 15
-
-    /// `(sampled, total)` failed jobs for a push. `sampled < total` means the cap bit.
-    func failureSample(for push: Push) -> (sampled: Int, total: Int) {
-        let total = (jobsByPush[push.id] ?? [])
-            .count { $0.result.isFailure && $0.state == .completed }
-        return (min(total, Self.failureLogSampleLimit), total)
+    func fetchHealthSummary(for push: Push) async {
+        guard healthSummaries[push.id] == nil else { return }
+        await loadHealthSummary(for: push)
     }
 
-    func fetchFailureLines(for push: Push) async {
-        guard failureLinesByPush[push.id] == nil else { return }
-        let failed = Array((jobsByPush[push.id] ?? [])
-            .filter { $0.result.isFailure && $0.state == .completed }
-            .prefix(Self.failureLogSampleLimit))
-        guard !failed.isEmpty else {
-            failureLinesByPush[push.id] = []
-            return
-        }
-        var allErrors: [TextLogError] = []
-        await withTaskGroup(of: [TextLogError].self) { group in
-            for job in failed {
-                group.addTask {
-                    (try? await TreeHerderService.shared.fetchTextLogErrors(jobId: job.id)) ?? []
-                }
-            }
-            for await errors in group {
-                allErrors.append(contentsOf: errors)
+    private func refreshHealthSummaries(for targets: [Push]) async {
+        await withTaskGroup(of: Void.self) { group in
+            for push in targets {
+                group.addTask { [weak self] in await self?.loadHealthSummary(for: push) }
             }
         }
-        failureLinesByPush[push.id] = allErrors
     }
 
-    func failureGroups(for push: Push) -> [FailureGroup] {
-        let errors = failureLinesByPush[push.id] ?? []
-        var byKey: [String: (jobs: Set<Int>, first: String)] = [:]
-        for error in errors {
-            let key = error.groupKey
-            var entry = byKey[key] ?? (jobs: [], first: error.line)
-            entry.jobs.insert(error.job)
-            byKey[key] = entry
+    private func loadHealthSummary(for push: Push) async {
+        let revision = push.revision
+        if let summary = try? await gate.run({ try await TreeHerderService.shared.fetchHealthSummary(revision: revision) }) {
+            healthSummaries[push.id] = summary
         }
-        return byKey.map { key, val in
-            FailureGroup(id: key, pattern: key, affectedJobCount: val.jobs.count, exampleLine: val.first)
-        }.sorted { $0.affectedJobCount > $1.affectedJobCount }
+    }
+
+    func fetchHealth(for push: Push) async {
+        let revision = push.revision
+        if let health = try? await TreeHerderService.shared.fetchHealth(revision: revision) {
+            healths[push.id] = health
+        }
+    }
+
+    // MARK: - One job's failures
+
+    func fetchFailures(jobId: Int) async {
+        guard suggestions[jobId] == nil else { return }
+        async let lines = try? gate.run { try await TreeHerderService.shared.fetchBugSuggestions(jobId: jobId) }
+        async let detail = try? gate.run { try await TreeHerderService.shared.fetchJobDetail(jobId: jobId) }
+        let (fetchedLines, fetchedDetail) = await (lines, detail)
+        if let fetchedDetail { jobDetails[jobId] = fetchedDetail }
+        suggestions[jobId] = fetchedLines ?? []
+    }
+
+    func fetchFirstFailingTest(jobId: Int) async {
+        guard firstFailingTest[jobId] == nil else { return }
+        let errors = try? await gate.run { try await TreeHerderService.shared.fetchTextLogErrors(jobId: jobId) }
+        firstFailingTest[jobId] = errors?.lazy.compactMap { SimpleView.testFromErrorLine($0.line) }.first ?? ""
+    }
+}
+
+nonisolated struct Person: Codable, Hashable, Sendable {
+    let email: String
+    let name: String?
+}
+
+/// At most `limit` requests in flight, like the web's `queued()`: a push list or a
+/// "Seen before" section can otherwise fire dozens at once at a shared service.
+actor RequestGate {
+    private let limit: Int
+    private var inFlight = 0
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    init(limit: Int) { self.limit = limit }
+
+    func run<T: Sendable>(_ work: @Sendable () async throws -> T) async throws -> T {
+        if inFlight >= limit {
+            await withCheckedContinuation { waiting.append($0) }
+        } else {
+            inFlight += 1
+        }
+        defer {
+            if waiting.isEmpty { inFlight -= 1 } else { waiting.removeFirst().resume() }
+        }
+        return try await work()
     }
 }
