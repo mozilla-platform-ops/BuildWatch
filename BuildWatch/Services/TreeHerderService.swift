@@ -125,6 +125,37 @@ nonisolated final class TreeHerderService: Sendable {
         return try JSONDecoder().decode([TextLogError].self, from: data)
     }
 
+    // MARK: - Push Health
+
+    func fetchHealthSummary(revision: String) async throws -> HealthSummary? {
+        try await get([HealthSummary].self, "push/health_summary/", [
+            URLQueryItem(name: "revision", value: revision),
+            URLQueryItem(name: "with_in_progress_tests", value: "true"),
+        ]).first
+    }
+
+    func fetchHealth(revision: String) async throws -> PushHealth {
+        try await get(PushHealth.self, "push/health/", [URLQueryItem(name: "revision", value: revision)])
+    }
+
+    // MARK: - One Job
+
+    func fetchBugSuggestions(jobId: Int) async throws -> [BugSuggestion] {
+        try await get([BugSuggestion].self, "jobs/\(jobId)/bug_suggestions/")
+    }
+
+    func fetchJobDetail(jobId: Int) async throws -> JobDetail {
+        try await get(JobDetail.self, "jobs/\(jobId)/")
+    }
+
+    private func get<T: Decodable>(_ type: T.Type, _ path: String, _ query: [URLQueryItem] = []) async throws -> T {
+        var components = URLComponents(string: "\(base)/project/try/\(path)")!
+        if !query.isEmpty { components.queryItems = query }
+        let (data, response) = try await session.data(from: components.url!)
+        try validateResponse(response)
+        return try JSONDecoder().decode(type, from: data)
+    }
+
     // MARK: - Compact Job Parser
 
     /// Column offsets into TreeHerder's positional job rows, resolved once per response.

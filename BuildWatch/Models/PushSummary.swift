@@ -43,6 +43,10 @@ nonisolated struct PushSummary: Sendable {
     /// other field on this type, and it walks the whole job array to do it.
     let eta: PushETA?
 
+    /// Tier 1 and 2 counts keyed the way Treeherder keys them (`success`, `testfailed`,
+    /// `running`, …): what the tick ring and its legend draw.
+    let ringStatus: [String: Int]
+
     var isRunning: Bool { runningCount > 0 || pendingCount > 0 || lowerTierActive > 0 }
     var hasJobs: Bool { totalCount > 0 || lowerTierTotal > 0 }
     var isComplete: Bool { hasJobs && !isRunning }
@@ -96,6 +100,7 @@ nonisolated struct PushSummary: Sendable {
         // finish while hundreds of jobs were still queued, exactly the bug that made
         // `isComplete` count all tiers in the first place.
         eta = pushedAt.flatMap { PushETA(jobs: jobs, pushedAt: $0, now: now) }
+        ringStatus = SimpleView.status(from: jobs)
     }
 
     /// Spoken summary for the push row, so a VoiceOver user hears the same thing the

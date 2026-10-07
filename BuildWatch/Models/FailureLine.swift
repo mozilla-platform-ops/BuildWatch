@@ -22,10 +22,3 @@ nonisolated struct TextLogError: Decodable, Identifiable {
         return String(line.prefix(100)).trimmingCharacters(in: .whitespaces)
     }
 }
-
-nonisolated struct FailureGroup: Identifiable {
-    let id: String
-    let pattern: String
-    let affectedJobCount: Int
-    let exampleLine: String
-}

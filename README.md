@@ -13,11 +13,18 @@
   <a href="https://apps.apple.com/us/app/buildwatch-moz/id6759932755">
     <img src="https://img.shields.io/badge/App%20Store-Download-0D96F6?logo=apple&logoColor=white" alt="Download on the App Store" />
   </a>
-  <img src="https://img.shields.io/badge/version-1.0-brightgreen" alt="Version 1.0" />
+  <img src="https://img.shields.io/badge/version-1.3-brightgreen" alt="Version 1.3" />
   <img src="https://img.shields.io/badge/platform-iOS%2026.2%2B-blue" alt="iOS 26.2+" />
   <img src="https://img.shields.io/badge/iPhone%20%C2%B7%20iPad-universal-lightgrey" alt="Universal" />
   <img src="https://img.shields.io/badge/price-free-success" alt="Free" />
   <img src="https://img.shields.io/badge/dependencies-none-blueviolet" alt="No dependencies" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/verdict.png" width="200" alt="A push: a ring of 188 jobs and the verdict 'One test broke. Nothing here fails on the parent, so it's probably yours.'" />
+  <img src="docs/screenshots/pushes.png" width="200" alt="Ryan's pushes: each try push with a ring of its jobs and one line of status" />
+  <img src="docs/screenshots/failure.png" width="200" alt="A failing test opened in place: the failure line and the Bugzilla bugs that match it" />
+  <img src="docs/screenshots/dark.png" width="200" alt="Dark mode: 'Lint failed.' over a ring of 192 jobs" />
 </p>
 
 <p align="center">
@@ -26,105 +33,106 @@
 
 ---
 
-BuildWatch shows you every try push you've made, what's still running, what went red, and
-exactly which tests failed — without opening TreeHerder in a browser. Built for the Mozilla
-engineers who push to try a dozen times a day and don't want to babysit a tab.
+BuildWatch shows your recent try pushes, what's still running, what went red, and exactly
+which tests failed, without opening Treeherder in a browser. It's for Mozilla engineers who
+push to try a dozen times a day and don't want to babysit a tab.
 
-**Live on the App Store since 24 August 2026.** Free, no account, no tracking, ~1.2 MB.
-Every API it talks to is public, so it works off the corporate network with no VPN.
+Open a push and it tells you what happened in one sentence:
 
-<p align="center">
-  <img src="docs/screenshots/pushes.png" width="215" alt="Try push list with per-platform status dots" />
-  <img src="docs/screenshots/push-detail.png" width="215" alt="Push detail with quick actions and job list" />
-  <img src="docs/screenshots/failure-summary.png" width="215" alt="Failures grouped by test" />
-  <img src="docs/screenshots/watch.png" width="215" alt="Watched pushes marked with a bell" />
-</p>
+> **One test broke.**
+> Nothing here fails on the parent, so it's probably yours. Nine other failures have been seen before.
+
+Free, no account, no sign-in, no tracking. Every API it reads is public, so it works off the
+corporate network with no VPN.
 
 ---
 
+## It looks like Treeherder
+
+Version 1.3 rebuilds the app on the design of
+[Treeherder's simple view](https://github.com/mozilla/treeherder/pull/9898), the phone-sized
+page that tells you one thing about your push instead of showing you everything. BuildWatch and
+the simple view answer the same question for the same people, so they share one look:
+
+- **Treeherder's own colours.** Bootstrap 5.3 with Treeherder's `#337ab7` links, the `#222`
+  and `#354048` bars, the light-blue info bar, and the `--status-*` job colours from
+  `treeherder-job-buttons.css`. Dark mode uses Bootstrap's dark theme, flipped with the sun and
+  moon switch in the top bar.
+- **The same words.** Every sentence is ported from the simple view's `strings.js`, and the
+  rules behind them (the verdict, the row status, push titles, author names, how failures are
+  grouped) from its `helpers.js`. Platform names come from Treeherder's `thPlatformMap`, so a
+  job reads "macOS 15 AArch64" in both places.
+- **The ring.** Every push is a circle of ticks, one share of the jobs each, coloured by state.
+  It pops in around the circle and ripples while jobs are still running.
+
 ## What it does
 
-### The push list
+### Your pushes
 
-Your try pushes, newest first, filtered to you via TreeHerder's `?author=` API. Each row
-carries a row of per-platform status dots coloured by that platform's worst result, a red
-badge with the tier-1 failure count, a spinner while anything is still building, and how
-long ago you pushed.
+Your recent try pushes, newest first, each with a small ring of its jobs and one line of
+status: *All green*, *Tests failing*, *Lint failing · still running*, *Running · 5 of 51*.
+Kit, the Firefox mascot, keeps you company at the top.
 
-Swipe a row to **watch** it. When the last job resolves you get a local notification with
-the pass/fail count — sent time-sensitive if anything went red, so it cuts through a Focus
-mode. The watch is one-shot: it clears itself once it fires.
+Tap the `author: … ✎` bar to look at anyone's pushes by email. People you've looked at are
+remembered on the **Pushes by…** screen.
 
-### Push detail
+### The verdict
 
-Tap through for the full commit messages, a counts bar (passed / failed / running /
-pending), and every job grouped by platform and build option. Filter to **All**,
-**Failures**, or **Running**.
+Open a push for its ring, the number of jobs (or the percentage done while it runs), and the
+verdict: what broke, and whether it's yours. BuildWatch reads Treeherder's Push Health to tell
+a failure that's **new in your push** from one that **also fails on the parent**, one that's
+been **seen before**, or a **known intermittent**, and files each failure under its heading:
 
-Tier-2 jobs are counted separately rather than folded in, because the platform groups below
-only list tier 1 — so the headline number always matches the dots next to it.
+**Broken here · Builds · Lint · Also failing on the parent · Seen before · Known intermittents**
 
-Bug numbers in commit messages become tappable links. Every job row deep-links to its
-Taskcluster task. All external links (TreeHerder, Taskcluster, Bugzilla) open in an in-app
-Safari sheet — one tap to dismiss, no app switch.
+Push Health only reports failures classified as new, so BuildWatch finds the rest itself from
+the job list and names each one by the first failing test in its log.
 
-### The ETA
+### The failure, not the log
+
+Tap a failing test and it opens in place: the failure lines from the log, whether this
+failure is new in your push or how many times it's been seen before, and the Bugzilla bugs
+that already match it (resolved ones struck through). From there it's one tap to the log
+viewer, the raw log, or the job in Treeherder's full view.
+
+### When it'll finish
 
 The reason a try push is annoying is not that it fails, it's that you don't know when it
-lands. Each running push carries an estimate: a countdown on the list row, and a card at the
-top of the push detail.
+lands. While a push runs, BuildWatch estimates **when most of its results will be in**, and
+shows it under the verdict: *Most by 3:40 PM · all done around 5:10 PM*.
 
-It shows **two numbers, not one**, because a push doesn't finish smoothly. On a sampled
-907-job push, 90% of the jobs were done at 47 minutes and the *last* one at 144 — and the
-tail wasn't slow work, it was waiting. Those final jobs ran for 12–25 minutes after queueing
-for 95–117. So the headline is **when 90% of your jobs are in**, which is both the reliable
-number and the one that answers "when will I know if this is green". The full finish is shown
-alongside it, deliberately as an approximation.
-
-Backtested by replaying 77 completed pushes at nine points each:
+It gives two numbers, not one, because a push doesn't finish smoothly. On a sampled 907-job
+push, 90% of the jobs were done at 47 minutes and the *last* one at 144, and the tail wasn't
+slow work, it was waiting: those final jobs ran for 12–25 minutes after queueing for 95–117.
+So the headline is when 90% of your jobs are in, which is both the reliable number and the one
+that answers "when will I know if this is green". Backtested by replaying 77 completed pushes
+at nine points each:
 
 | | median error | within ±25% | within ±50% | overruns by >30 min |
 |---|---|---|---|---|
 | Most results (90% of jobs) | **2 min** | **70%** | **88%** | **1%** |
 | All done (last job) | 13 min | 39% | 62% | 32% |
 
-**How.** Run time is the predictable part — a job's duration has a median coefficient of
-variation of 5%, so a table of per-job-type medians shipped with the app predicts it to
-within 5%. Queue *wait* is the hard part, and it's read live from the push itself: jobs in a
-worker pool that have already started tell you what the ones that haven't will wait. On one
-push, 76 jobs in `macosx1500-aarch64-shippable` had a p25, median and p90 queue wait of
-140.7, 140.7 and 144.6 minutes, because they're all gated on the same build and released
-together.
+**How.** Run time is the predictable part: a job's duration has a median coefficient of
+variation of 5%, so a bundled table of per-job-type medians predicts it to within 5%. Queue
+*wait* is the hard part, and it's read live from the push itself: jobs in a worker pool that
+have already started tell you what the ones that haven't will wait.
 
-**When it says nothing.** The estimate needs a pool to have someone in it who has started.
-Before that it is wrong by about 113 minutes, so instead of a number you get progress and
-elapsed time. 83% of pushes clear the bar, at a median of 30 minutes in, and then stay clear
-for a median 72% of what's left.
+**When it says nothing.** Until a pool has someone in it who has started, an estimate is
+wrong by about 113 minutes, so you get progress instead of a number.
 
-**When it's waiting on a build.** The most common reason a push looks frozen is that its
-tests are `unscheduled` behind a build — one live Talos push had 32 of its 37 unresolved jobs
-in exactly that state, with no pool observation to go on at all. Rather than a vague push
-ETA, the card switches to the precise thing: which build stage is running and when tests get
-released. Gecko's shippable pipeline is three stages deep
+**When it's waiting on a build.** The most common reason a push looks frozen is that its tests
+are `unscheduled` behind a build. Then BuildWatch says so precisely: *Tests start in ~12 min.
+32 jobs wait on the macosx shippable build*. Gecko's shippable pipeline is three stages deep
 (`instrumented-build-` → `generate-profile-` → `build-`), so the chain is walked rather than
 just the running stage. Predicted build finishes land within 5 minutes 71% of the time.
 
-The one thing it can't do is see the future: retrigger a job three hours later and the
-estimate simply recomputes.
+### Watching a push
 
-### Failure Summary
-
-The reason the app exists. It pulls TreeHerder's structured `text_log_errors` for up to 15
-failed jobs concurrently, groups them by test path, and ranks by how many jobs each one hit.
-Expand a row for the raw error line.
-
-A wall of red jobs collapses into "this one test broke across fifteen of them" — which is
-the question you actually had.
-
-### Settings
-
-Your LDAP handle (just the handle — `rcurran`, not the full address) and a notification
-opt-in that shows its live authorization status.
+While a push is running, tap **Notify me when it finishes** (or long-press it in the list).
+When its last job resolves, BuildWatch sends a notification with the pass/fail count, marked
+time-sensitive if anything went red so it gets through a Focus mode. BuildWatch checks while
+it's open: every 30 seconds while something is building, every two minutes once things settle.
 
 ---
 
@@ -132,181 +140,66 @@ opt-in that shows its live authorization status.
 
 | Source | Used for |
 |--------|----------|
-| [TreeHerder](https://treeherder.mozilla.org) | Push list, job results, text log errors |
-| [Taskcluster](https://firefox-ci-tc.services.mozilla.com) | Task deep links |
-| [Bugzilla](https://bugzilla.mozilla.org) | Bug links parsed out of commit messages |
+| [Treeherder](https://treeherder.mozilla.org) | Pushes, jobs, Push Health, failure lines and bug suggestions, log errors |
+| [Bugzilla](https://bugzilla.mozilla.org) | Links to the bugs matched to a failure |
+| Taskcluster | Links to raw logs, as Treeherder reports them |
 
-The ETA adds no fourth source and makes no extra requests: it runs off the job rows
-BuildWatch already fetches, plus one bundled 137 KB table of historical job durations
-(`BuildWatch/Resources/JobDurations.json`, regenerate with
-`tools/generate-duration-table.py`).
-
-All read-only, all public, all unauthenticated. BuildWatch stores nothing but your LDAP
-handle and your watch list, both in `UserDefaults` on-device.
+All read-only, all public, all unauthenticated. **BuildWatch holds no credentials or API keys
+of any kind.** It keeps four things on the device: whose pushes you're looking at, the people
+you've looked at, your theme, and the pushes you're watching.
 
 ---
 
-## Architecture
+## Under the hood
+
+SwiftUI throughout, state via the `@Observable` macro, networking via `async/await` on
+`URLSession`. **No external dependencies and no package manager:** clone, open, run.
 
 ```
 BuildWatch/
-├── BuildWatchApp.swift        — app entry, notification delegate + deep link
-├── ContentView.swift          — two-tab shell (Try / Settings)
-├── Extensions.swift           — relative-time helpers, SFSafariViewController wrapper
+├── BuildWatchApp.swift          app entry, notification delegate
+├── ContentView.swift            one navigation stack, theme, polling, in-app Safari
+├── Theme/
+│   └── SimpleTheme.swift        Treeherder's colours, type scale, cards, flow layout
 ├── Models/
-│   ├── Push.swift             — Push, PushRevision, try-message cleanup
-│   ├── Job.swift              — Job, JobResult, JobState, PlatformGroup
-│   ├── PushETA.swift          — completion estimate, queue-wait model, build chain
-│   ├── JobDurationTable.swift — bundled per-job-type run times
-│   └── FailureLine.swift      — TextLogError, FailureGroup
+│   ├── Strings.swift            the simple view's words (strings.js)
+│   ├── Verdict.swift            verdict, row status, grouping (helpers.js)
+│   ├── PushHealth.swift         Push Health, bug suggestions, job detail
+│   ├── PlatformNames.swift      Treeherder's thPlatformMap
+│   ├── Push.swift, Job.swift    pushes, jobs, results, states
+│   ├── PushSummary.swift        derived job state, computed once per refresh
+│   ├── PushETA.swift            completion estimate, queue-wait model, build chain
+│   └── JobDurationTable.swift   bundled per-job-type run times
 ├── Services/
-│   └── TreeHerderService.swift    — TreeHerder API, compact-job parser
+│   └── TreeHerderService.swift  Treeherder API, compact-job parser
 ├── ViewModels/
-│   └── DashboardViewModel.swift   — @Observable state for both tabs
+│   └── DashboardViewModel.swift pushes, jobs, health, people, watches
 └── Views/
-    ├── DashboardView.swift        — push list (TryPushesView)
-    ├── ETAView.swift              — ETA card, timeline track, list-row pill
-    ├── PushDetailView.swift       — jobs, quick actions, counts bar
-    ├── FailureSummaryView.swift   — grouped failure sheet
-    └── SettingsView.swift         — preferences
+    ├── SimplePage.swift         bars, theme switch, page scaffold, Kit
+    ├── TickRing.swift           the ring (Ring.jsx)
+    ├── PushListScreen.swift     your pushes, the author bar, Pushes by…
+    └── PushScreen.swift         the verdict, sections, failures in place
 ```
 
-SwiftUI throughout, state via the `@Observable` macro, networking via `async/await` on
-`URLSession`. **No external dependencies and no package manager** — clone, open, run.
+**Refreshes are deltas.** BuildWatch keeps Treeherder's own `last_modified` high-water mark
+for each push and passes it back as `last_modified__gt`, so a refresh carries only the jobs
+whose state moved: about **142 KB down to 1.7 KB** on a 1,262-job push. The filter works at
+one-second granularity, so the client rewinds the mark two seconds and never trusts the
+phone's clock.
 
-**The compact job format.** TreeHerder's `/jobs/?return_type=list` endpoint doesn't return
-objects. It returns a `job_property_names` array and then every job as a bare positional
-`[Any]` row — 37 columns, of which BuildWatch reads 14. `Codable` can't express that, so the
-parser builds a column map from the header once per response and indexes `JSONSerialization`
-output directly.
+**The compact job format.** Treeherder's `/jobs/?return_type=list` returns a
+`job_property_names` header and then every job as a bare positional row, 37 columns of which
+BuildWatch reads 15. `Codable` can't express that, so the parser builds a column map once per
+response and indexes the rows directly, off the main thread.
 
-A busy try push is ~750 jobs and 400 KB; a big one runs past 1,200 jobs and 676 KB. That
-size is the constraint every design decision below is working against.
+**Gentle on a shared service.** Row summaries, bug suggestions and log errors are fetched
+at most four at a time, background polling covers only the newest pushes plus anything watched,
+and a manual pull refreshes everything on screen.
 
----
+**Accessible.** Each push row reads to VoiceOver as one sentence, text scales with Dynamic
+Type, and the ring, its counter and the entrance animations hold still under Reduce Motion.
 
-## Requirements
-
-- Xcode 26+
-- iOS 26.2+ (iPhone or iPad — the App Store build is universal)
-- No Mozilla network access or VPN required
-
-## Building
-
-```bash
-git clone https://github.com/mozilla-platform-ops/BuildWatch.git
-cd BuildWatch
-open BuildWatch.xcodeproj
-```
-
-Set your team under Signing & Capabilities, then run. That's the whole setup.
-
-On first launch, put your LDAP handle in **Settings → Profile** — the push list is empty
-until it knows who you are.
-
----
-
-## Not implemented, on purpose
-
-**Retrigger, acknowledge, and classify.** These are the obvious next features and they are
-all blocked on the same thing: TreeHerder gates every write behind a Taskcluster OIDC
-session, which BuildWatch does not implement.
-
-Version 1.0 ships a **Retrigger All Failed** button that posts unauthenticated and is
-rejected server-side, failing quietly. It should not have shipped in that state; it is
-removed on the branch described below, and no write action will return until sign-in lands
-behind it.
-
----
-
-## Unreleased — performance and accessibility pass
-
-Branch [`perf-and-accessibility-pass`](https://github.com/mozilla-platform-ops/BuildWatch/tree/perf-and-accessibility-pass).
-Complete and unmerged, **not** in the 1.0 App Store build.
-
-### Incremental refresh
-
-1.0 re-downloads every job on every read. The branch keeps TreeHerder's own `last_modified`
-high-water mark per push and passes it back as `last_modified__gt`, so a poll carries only
-the rows whose state actually moved — roughly **142 KB down to 1.7 KB** on a 1,262-job push.
-
-Two subtleties, both load-bearing:
-
-- TreeHerder parses that filter at **second** granularity, making it inclusive of the
-  watermark's own second. The client rewinds the mark two seconds anyway, so a row written
-  in the same second as the previous read cannot fall through the gap. Re-sending a handful
-  of rows is far cheaper than showing a stale result.
-- The watermark is always the server's string, never a device clock reading, so a phone with
-  skewed time can't silently skip updates.
-
-### Off the main thread
-
-The project builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. That default quietly
-pinned every request *and* every JSON parse to the main actor — including deserialising a
-676 KB payload with the user's finger still on the screen. Marking `TreeHerderService`
-`nonisolated` moves the wait and the parse off; only the finished `Sendable` result crosses
-back.
-
-### Precomputed derived state
-
-Platform grouping and pass/fail/running counts used to be computed properties evaluated
-inside `body`. Rendering one push row ran three full passes over that push's job array, and
-because `jobsByPush` is `@Observable`, one push's jobs arriving invalidated every visible
-row. `PushSummary` computes all of it once at ingest; the view does an O(1) lookup.
-
-### Legible in light mode
-
-Three of the four original status colours failed WCAG AA non-text contrast (3:1) on a white
-list row — success green sat at **1.67:1**, effectively invisible. `StatusPalette` is now a
-light/dark pair per colour: darkened light variants at 4.4:1–5.7:1 on white, the original
-bright variants unchanged in dark mode.
-
-### Accessibility
-
-Full VoiceOver support — each push row speaks as one sentence carrying its title, author,
-age, and the status the dots encode (previously the dots announced as nothing at all).
-Status dots switch to distinct silhouettes (✓ ✗ ⋯ −) under *Differentiate Without Color* and
-scale with Dynamic Type. Loading shimmer respects *Reduce Motion*.
-
-### Also on the branch
-
-- **Adaptive background polling** — 30s while anything is building, 120s once settled,
-  paused when the app isn't frontmost. The automatic tick only re-reads the head of the list
-  plus anything watched; a manual pull re-reads everything on screen. 1.0 polls not at all,
-  and its pull-to-refresh only refreshed *watched* pushes, so unwatched status dots stayed
-  frozen at whatever they were on first load.
-- **Live elapsed time** on running jobs — 1.0 showed nothing, so a job 20 seconds in and a
-  job wedged for 40 minutes looked identical.
-- **Haptics** — distinct feedback for refresh, watch, pass, and fail.
-- **Retrigger removed** rather than left failing silently.
-
-### Correctness fixes on top
-
-**Tier-2 jobs now count toward completion.** `PushSummary` gates its counting loop on
-`tier == 1`, so tier-2 jobs still running were invisible to `isComplete` — while the
-completion notification's failure count *did* include tier-2 failures. A push could be
-declared finished with tier-2 work still going, firing "Try push passed" early, and because
-the watch is one-shot no correction followed.
-
-Measured by reconstructing job end timestamps across 17 fully-completed real try pushes:
-**2 of them (12%)** had a window where every tier-1 job was done and tier-2 was not — 6.3
-and 14.3 minutes wide. Tier 2 is not a rounding error either; all 30 pushes sampled carried
-tier-2 jobs, and one was 209 tier-1 against 545 tier-2. The dots and platform groups stay
-tier-1-only, which was always the intent — only completion changes.
-
-**The About screen reads the bundle.** It previously showed a hardcoded `1.0.0` whatever was
-installed, which made a TestFlight build indistinguishable from the App Store one.
-
-**Failure Summary admits when it's sampling.** It pulls logs for the first 15 failed jobs —
-one request each, a deliberate ceiling on a burst against a shared public service — but
-rendered the result as though it were complete. Per-group counts are bounded by that sample,
-so a test that really hit 40 jobs read as "15 jobs". The sheet now says so when the sample is
-partial.
-
-### Benchmarks
-
-`Benchmarks/ParserBenchmark.swift` is a standalone executable that runs the old and new
-parsers against a real TreeHerder payload and asserts they produce identical rows:
+`Benchmarks/ParserBenchmark.swift` runs the parser against a real Treeherder payload:
 
 ```bash
 Benchmarks/fetch-fixture.sh /tmp/push.json
@@ -316,29 +209,56 @@ swiftc -O Benchmarks/ParserBenchmark.swift -o /tmp/bwbench
 
 ---
 
+## Building
+
+```bash
+git clone https://github.com/mozilla-platform-ops/BuildWatch.git
+cd BuildWatch
+open BuildWatch.xcodeproj
+```
+
+Set your team under Signing & Capabilities, then run. On first launch, enter your Mozilla
+email on the **Pushes by…** screen. Needs Xcode 26+ and iOS 26.2+; no Mozilla network access
+or VPN.
+
+The job-duration table behind the estimate is `BuildWatch/Resources/JobDurations.json`;
+regenerate it with `tools/generate-duration-table.py`.
+
+---
+
+## Not implemented, on purpose
+
+**Rerun, acknowledge and classify.** These are the obvious next features, and they're all
+blocked on the same thing: Treeherder gates every write behind a Taskcluster sign-in, which
+BuildWatch doesn't have. Version 1.0 shipped a retrigger button that couldn't work and failed
+quietly; 1.1 removed it, and no write action will come back until sign-in is behind it.
+
+## Releases
+
+| Version | |
+|---|---|
+| **1.3** | The Treeherder simple-view design: the verdict, Push Health sections, failures and bugs in place, light and dark, anyone's pushes. And when a push will finish (built as 1.2, first shipped here) |
+| **1.1** | Delta refreshes, background polling, VoiceOver, legible light mode, tier-2 completion fix, retrigger removed |
+| **1.0** | First App Store release, 24 August 2026 |
+
 ## Roadmap
 
-- [x] Local notifications when a watched push finishes
-- [x] Failure Summary grouped by test
-- [x] Ship 1.0 to the App Store
-- [ ] Merge the performance and accessibility pass
-- [ ] Taskcluster OIDC sign-in — the prerequisite for every write action below
-- [ ] Retrigger jobs (needs sign-in)
-- [ ] Acknowledge / classify failures (needs sign-in)
-- [ ] Backout via Lando API
-- [ ] File a bug pre-filled with failure details
+- [x] Notifications when a watched push finishes
 - [x] Estimated time to completion
-- [ ] WebSocket live updates from TreeHerder
-- [ ] Intermittent failure history
-- [ ] Sheriff mode — tree management quick actions
-- [ ] Apple Watch complication for tree status
+- [x] The Treeherder simple-view design
+- [ ] Taskcluster sign-in, the prerequisite for every write action below
+- [ ] Rerun failed jobs
+- [ ] Acknowledge and classify failures
+- [ ] File a bug pre-filled with failure details
+- [ ] Live updates from Treeherder's Pulse stream
 
 ---
 
 ## Contributing
 
-PRs welcome. File issues at [bugzilla.mozilla.org](https://bugzilla.mozilla.org) under
-`Firefox :: Developer Tools`.
+PRs welcome. Bugs and ideas:
+[GitHub issues](https://github.com/mozilla-platform-ops/BuildWatch/issues/new), which is also
+where the link at the bottom of every screen in the app goes.
 
 ---
 
@@ -349,5 +269,5 @@ PRs welcome. File issues at [bugzilla.mozilla.org](https://bugzilla.mozilla.org)
   &nbsp;·&nbsp;
   <a href="https://github.com/mozilla-platform-ops/BuildWatch">mozilla-platform-ops/BuildWatch</a>
   &nbsp;·&nbsp;
-  Powered by <a href="https://treeherder.mozilla.org">TreeHerder</a>
+  Powered by <a href="https://treeherder.mozilla.org">Treeherder</a>
 </p>

@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated struct Push: Identifiable, Codable, Sendable {
+nonisolated struct Push: Identifiable, Codable, Hashable, Sendable {
     let id: Int
     let revision: String
     let author: String
@@ -18,28 +18,21 @@ nonisolated struct Push: Identifiable, Codable, Sendable {
         revisions.first?.shortMessage ?? ""
     }
 
-    // Human-readable title: prefers a real patch commit over try-selector boilerplate
+    /// The push's title, as Treeherder's simple view picks it: the first commit line that
+    /// isn't try syntax, else the fuzzy query, else the revision.
     var displayTitle: String {
-        for revision in revisions {
-            let msg = revision.shortMessage.trimmingCharacters(in: .whitespaces)
-            guard !msg.isEmpty else { continue }
-            if !msg.hasPrefix("Fuzzy") && !msg.hasPrefix("try:") && !msg.hasPrefix("a=try") {
-                return msg
-            }
+        let lines = revisions.map {
+            ($0.comments.components(separatedBy: "\n").first ?? "").trimmingCharacters(in: .whitespaces)
         }
-        return Self.cleanTryMessage(revisions.first?.shortMessage ?? "")
-    }
-
-    private static func cleanTryMessage(_ raw: String) -> String {
-        var s = raw
-        if s.hasPrefix("Fuzzy ") { s = String(s.dropFirst(6)) }
-        if s.hasPrefix("try: ")  { s = String(s.dropFirst(5)) }
-        if let range = s.range(of: "query=") { s = String(s[range.upperBound...]) }
-        return s.components(separatedBy: " ")
-            .map { $0.hasPrefix("'") ? String($0.dropFirst()) : $0 }
-            .filter { !$0.isEmpty }
-            .joined(separator: " · ")
-            .trimmingCharacters(in: .whitespaces)
+        if let human = lines.first(where: { !$0.isEmpty && $0.firstMatch(of: /^(?i)(Fuzzy query|try:|Try Chooser|Pushed via|Try task config)/) == nil }) {
+            return human
+        }
+        if let query = lines.first?.firstMatch(of: /^Fuzzy query=(.*)/) {
+            return String(query.1)
+                .replacingOccurrences(of: "&query=", with: " · ")
+                .replacing(/[\^$'"]/, with: "")
+        }
+        return shortRevision
     }
 
     enum CodingKeys: String, CodingKey {
@@ -48,7 +41,7 @@ nonisolated struct Push: Identifiable, Codable, Sendable {
     }
 }
 
-nonisolated struct PushRevision: Identifiable, Codable, Sendable {
+nonisolated struct PushRevision: Identifiable, Codable, Hashable, Sendable {
     var id: String { revision }
     let revision: String
     let author: String
