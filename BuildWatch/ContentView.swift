@@ -39,7 +39,8 @@ struct ContentView: View {
             }
         }
         .environment(viewModel)
-        .preferredColorScheme(theme == "dark" ? .dark : theme == "light" ? .light : nil)
+        .onChange(of: theme, initial: true) { applyTheme() }
+        .onChange(of: scenePhase) { applyTheme() }
         .tint(SV.link)
         .environment(\.openURL, OpenURLAction { url in
             safariURL = SafariURL(url: url)
@@ -61,6 +62,15 @@ struct ContentView: View {
                   let push = viewModel.pushes.first(where: { $0.id == id })
             else { return }
             path = [.push(push)]
+        }
+    }
+
+    /// Sets the theme on the window rather than with `preferredColorScheme`, which also
+    /// flips the status bar to dark text in light mode, unreadable on the always-dark top bar.
+    private func applyTheme() {
+        let style: UIUserInterfaceStyle = theme == "dark" ? .dark : theme == "light" ? .light : .unspecified
+        for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+            for window in scene.windows { window.overrideUserInterfaceStyle = style }
         }
     }
 
