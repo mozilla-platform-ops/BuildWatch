@@ -22,7 +22,7 @@
 
 <p align="center">
   <img src="docs/screenshots/verdict.png" width="200" alt="A push: a ring of 188 jobs and the verdict 'One test broke. Nothing here fails on the parent, so it's probably yours.'" />
-  <img src="docs/screenshots/pushes.png" width="200" alt="Ryan's pushes: each try push with a ring of its jobs and one line of status" />
+  <img src="docs/screenshots/push-list.png" width="200" alt="Ryan's pushes: each try push with a ring of its jobs and one line of status" />
   <img src="docs/screenshots/failure.png" width="200" alt="A failing test opened in place: the failure line and the Bugzilla bugs that match it" />
   <img src="docs/screenshots/dark.png" width="200" alt="Dark mode: 'Lint failed.' over a ring of 192 jobs" />
 </p>
