@@ -254,7 +254,7 @@ final class DashboardViewModel {
         }
 
         jobsByPush[push.id] = merged
-        summaries[push.id] = PushSummary(jobs: merged)
+        summaries[push.id] = PushSummary(jobs: merged, pushedAt: push.date)
         if let mark = snapshot.latestModified {
             watermarks[push.id] = max(mark, watermarks[push.id] ?? mark)
         }

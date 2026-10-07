@@ -198,6 +198,18 @@ struct PushRowView: View {
     private func accessibilityLabel(_ summary: PushSummary?) -> String {
         var parts = [push.displayTitle, "by \(push.authorHandle)", push.date.timeAgo()]
         parts.append(summary?.accessibilityLabel ?? "jobs still loading")
+        if let eta = summary?.eta {
+            switch eta.confidence {
+            case .firm:
+                parts.append("most results in \(eta.mostResultsBy.timeIntervalSinceNow.etaSpoken)")
+            case .blockedOnBuild:
+                if let build = eta.blockingBuild {
+                    parts.append("tests start in about \(build.releasesAt.timeIntervalSinceNow.etaSpoken)")
+                }
+            case .estimating:
+                break
+            }
+        }
         if viewModel.watchedPushIds.contains(push.id) { parts.append("watched") }
         return parts.joined(separator: ", ")
     }
@@ -206,12 +218,22 @@ struct PushRowView: View {
     private func statusBadge(_ summary: PushSummary?) -> some View {
         if let summary {
             if summary.failureCount > 0 {
+                // A red push that is still running wants both numbers: the failure count
+                // and how long the rest of it has left. Previously the badge won and the
+                // ETA never appeared on exactly the pushes being watched most closely.
                 Text("\(summary.failureCount)")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(StatusPalette.failed, in: Capsule())
+                if let eta = summary.eta, eta.confidence != .estimating {
+                    ETAPill(eta: eta)
+                }
+            } else if let eta = summary.eta, eta.confidence != .estimating {
+                // Once there is a real estimate the countdown says strictly more than a
+                // spinner does, in the same space.
+                ETAPill(eta: eta)
             } else if summary.isRunning {
                 Image(systemName: "arrow.trianglehead.clockwise.rotate.90")
                     .font(.caption)

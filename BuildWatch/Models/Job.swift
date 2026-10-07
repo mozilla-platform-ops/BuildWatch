@@ -52,6 +52,15 @@ nonisolated enum JobResult: String, Codable, Sendable, CaseIterable {
 
 nonisolated enum JobState: String, Codable, Sendable {
     case pending, running, completed
+    /// A task whose dependencies haven't resolved yet — a test still waiting on its build.
+    /// TreeHerder emits this alongside the other three and it is not rare: a live 691-job
+    /// push had 24 jobs in it. It was previously unmodelled, so the parser's unknown-state
+    /// fallback filed them as `.completed`, which made them invisible to `isRunning` and
+    /// could fire "Try push passed" with two dozen jobs not yet started.
+    case unscheduled
+
+    /// Not started, whether or not the queue has released it yet.
+    var isWaiting: Bool { self == .pending || self == .unscheduled }
 }
 
 nonisolated struct Job: Identifiable, Codable, Sendable {
@@ -66,12 +75,54 @@ nonisolated struct Job: Identifiable, Codable, Sendable {
     let jobGroupSymbol: String
     let state: JobState
     let result: JobResult
+    /// When Taskcluster accepted the task. The basis of every queue-wait calculation —
+    /// `startTimestamp - submitTimestamp` is how long this job sat in its pool.
+    let submitTimestamp: Int?
     let startTimestamp: Int?
     let endTimestamp: Int?
     let tier: Int
 
     var startDate: Date? {
         startTimestamp.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+    }
+
+    var submitDate: Date? {
+        submitTimestamp.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+    }
+
+    var endDate: Date? {
+        endTimestamp.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+    }
+
+    /// How long this job waited in its worker pool before a worker picked it up.
+    /// Only known once it has started; that is exactly what makes it useful for
+    /// predicting the jobs in the same pool that haven't.
+    var queueWait: TimeInterval? {
+        guard let s = submitTimestamp, let st = startTimestamp, st > s else { return nil }
+        return TimeInterval(st - s)
+    }
+
+    /// Jobs sharing this key contend for the same workers, so they share a queue wait.
+    var poolKey: String { "\(platform)|\(platformOption)" }
+
+    /// Where this job sits in the build chain tests wait on, or `nil` if it isn't part of it.
+    ///
+    /// A shippable macOS build is not one task, it is a pipeline: `instrumented-build-…`
+    /// produces a profiling binary, `generate-profile-…` runs it, and only then does
+    /// `build-…` produce the artifact tests consume. Missing the middle stage is why an
+    /// earlier version of this found no build to wait on at all on a live Talos push — the
+    /// `build-*` jobs were themselves still unscheduled, behind a running `generate-profile`.
+    ///
+    /// Deliberately a name check. The alternative is the Taskcluster dependency graph, which
+    /// costs one request per task.
+    var buildStage: Int? {
+        if jobTypeName.hasPrefix("toolchain-")            { return 0 }
+        if jobTypeName.hasPrefix("instrumented-build-")   { return 1 }
+        if jobTypeName.hasPrefix("generate-profile-")     { return 2 }
+        if jobTypeName.hasPrefix("build-")
+            || jobTypeName.hasPrefix("spidermonkey-")
+            || jobTypeName.contains("-build-")            { return 3 }
+        return nil
     }
 
     var duration: TimeInterval? {
@@ -105,7 +156,7 @@ nonisolated struct Job: Identifiable, Codable, Sendable {
     }
 
     var isRunning: Bool { state == .running }
-    var isPending: Bool { state == .pending }
+    var isPending: Bool { state.isWaiting }
 
     var displayResult: JobResult {
         state == .completed ? result : .unknown
@@ -118,9 +169,10 @@ nonisolated struct Job: Identifiable, Codable, Sendable {
     /// Spoken status, so VoiceOver conveys what the coloured glyph conveys visually.
     var statusDescription: String {
         switch state {
-        case .pending:   "pending"
-        case .running:   elapsedString().map { "running for \($0)" } ?? "running"
-        case .completed: durationString.map { "\(result.displayName), took \($0)" } ?? result.displayName
+        case .pending:     "pending"
+        case .unscheduled: "waiting on its build"
+        case .running:     elapsedString().map { "running for \($0)" } ?? "running"
+        case .completed:   durationString.map { "\(result.displayName), took \($0)" } ?? result.displayName
         }
     }
 
@@ -149,7 +201,7 @@ nonisolated struct PlatformGroup: Identifiable, Sendable {
         var failures = 0, pending = 0, running = 0, successes = 0
         for job in jobs {
             switch job.state {
-            case .pending: pending += 1
+            case .pending, .unscheduled: pending += 1
             case .running: running += 1
             case .completed:
                 if job.result.isFailure      { failures += 1 }

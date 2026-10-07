@@ -68,6 +68,50 @@ Bug numbers in commit messages become tappable links. Every job row deep-links t
 Taskcluster task. All external links (TreeHerder, Taskcluster, Bugzilla) open in an in-app
 Safari sheet — one tap to dismiss, no app switch.
 
+### The ETA
+
+The reason a try push is annoying is not that it fails, it's that you don't know when it
+lands. Each running push carries an estimate: a countdown on the list row, and a card at the
+top of the push detail.
+
+It shows **two numbers, not one**, because a push doesn't finish smoothly. On a sampled
+907-job push, 90% of the jobs were done at 47 minutes and the *last* one at 144 — and the
+tail wasn't slow work, it was waiting. Those final jobs ran for 12–25 minutes after queueing
+for 95–117. So the headline is **when 90% of your jobs are in**, which is both the reliable
+number and the one that answers "when will I know if this is green". The full finish is shown
+alongside it, deliberately as an approximation.
+
+Backtested by replaying 77 completed pushes at nine points each:
+
+| | median error | within ±25% | within ±50% | overruns by >30 min |
+|---|---|---|---|---|
+| Most results (90% of jobs) | **2 min** | **70%** | **88%** | **1%** |
+| All done (last job) | 13 min | 39% | 62% | 32% |
+
+**How.** Run time is the predictable part — a job's duration has a median coefficient of
+variation of 5%, so a table of per-job-type medians shipped with the app predicts it to
+within 5%. Queue *wait* is the hard part, and it's read live from the push itself: jobs in a
+worker pool that have already started tell you what the ones that haven't will wait. On one
+push, 76 jobs in `macosx1500-aarch64-shippable` had a p25, median and p90 queue wait of
+140.7, 140.7 and 144.6 minutes, because they're all gated on the same build and released
+together.
+
+**When it says nothing.** The estimate needs a pool to have someone in it who has started.
+Before that it is wrong by about 113 minutes, so instead of a number you get progress and
+elapsed time. 83% of pushes clear the bar, at a median of 30 minutes in, and then stay clear
+for a median 72% of what's left.
+
+**When it's waiting on a build.** The most common reason a push looks frozen is that its
+tests are `unscheduled` behind a build — one live Talos push had 32 of its 37 unresolved jobs
+in exactly that state, with no pool observation to go on at all. Rather than a vague push
+ETA, the card switches to the precise thing: which build stage is running and when tests get
+released. Gecko's shippable pipeline is three stages deep
+(`instrumented-build-` → `generate-profile-` → `build-`), so the chain is walked rather than
+just the running stage. Predicted build finishes land within 5 minutes 71% of the time.
+
+The one thing it can't do is see the future: retrigger a job three hours later and the
+estimate simply recomputes.
+
 ### Failure Summary
 
 The reason the app exists. It pulls TreeHerder's structured `text_log_errors` for up to 15
@@ -92,6 +136,11 @@ opt-in that shows its live authorization status.
 | [Taskcluster](https://firefox-ci-tc.services.mozilla.com) | Task deep links |
 | [Bugzilla](https://bugzilla.mozilla.org) | Bug links parsed out of commit messages |
 
+The ETA adds no fourth source and makes no extra requests: it runs off the job rows
+BuildWatch already fetches, plus one bundled 137 KB table of historical job durations
+(`BuildWatch/Resources/JobDurations.json`, regenerate with
+`tools/generate-duration-table.py`).
+
 All read-only, all public, all unauthenticated. BuildWatch stores nothing but your LDAP
 handle and your watch list, both in `UserDefaults` on-device.
 
@@ -107,6 +156,8 @@ BuildWatch/
 ├── Models/
 │   ├── Push.swift             — Push, PushRevision, try-message cleanup
 │   ├── Job.swift              — Job, JobResult, JobState, PlatformGroup
+│   ├── PushETA.swift          — completion estimate, queue-wait model, build chain
+│   ├── JobDurationTable.swift — bundled per-job-type run times
 │   └── FailureLine.swift      — TextLogError, FailureGroup
 ├── Services/
 │   └── TreeHerderService.swift    — TreeHerder API, compact-job parser
@@ -114,6 +165,7 @@ BuildWatch/
 │   └── DashboardViewModel.swift   — @Observable state for both tabs
 └── Views/
     ├── DashboardView.swift        — push list (TryPushesView)
+    ├── ETAView.swift              — ETA card, timeline track, list-row pill
     ├── PushDetailView.swift       — jobs, quick actions, counts bar
     ├── FailureSummaryView.swift   — grouped failure sheet
     └── SettingsView.swift         — preferences
@@ -275,6 +327,7 @@ swiftc -O Benchmarks/ParserBenchmark.swift -o /tmp/bwbench
 - [ ] Acknowledge / classify failures (needs sign-in)
 - [ ] Backout via Lando API
 - [ ] File a bug pre-filled with failure details
+- [x] Estimated time to completion
 - [ ] WebSocket live updates from TreeHerder
 - [ ] Intermittent failure history
 - [ ] Sheriff mode — tree management quick actions

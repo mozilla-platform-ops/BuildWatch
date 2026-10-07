@@ -129,13 +129,13 @@ nonisolated final class TreeHerderService: Sendable {
 
     /// Column offsets into TreeHerder's positional job rows, resolved once per response.
     ///
-    /// The response carries 37 columns; BuildWatch reads 14. Resolving them up front turns
+    /// The response carries 37 columns; BuildWatch reads 15. Resolving them up front turns
     /// the hot loop into plain integer indexing instead of one string hash per field per row
-    /// (~17k dictionary lookups on a 1,262-job push).
+    /// (~19k dictionary lookups on a 1,262-job push).
     private struct ColumnMap {
         let id, state, platform, platformOption: Int
         let jobTypeName, jobTypeSymbol, jobGroupName, jobGroupSymbol: Int
-        let result, startTimestamp, endTimestamp, tier: Int
+        let result, submitTimestamp, startTimestamp, endTimestamp, tier: Int
         let taskId, resultSetId, pushId, lastModified: Int
 
         init(_ names: [String]) {
@@ -152,6 +152,7 @@ nonisolated final class TreeHerderService: Sendable {
             jobGroupName    = at("job_group_name")
             jobGroupSymbol  = at("job_group_symbol")
             result          = at("result")
+            submitTimestamp = at("submit_timestamp")
             startTimestamp  = at("start_timestamp")
             endTimestamp    = at("end_timestamp")
             tier            = at("tier")
@@ -178,6 +179,11 @@ nonisolated final class TreeHerderService: Sendable {
             let count = row.count
             func str(_ i: Int) -> String? { i >= 0 && i < count ? row[i] as? String : nil }
             func int(_ i: Int) -> Int?    { i >= 0 && i < count ? row[i] as? Int    : nil }
+            // TreeHerder writes an *absent* timestamp as 0, not null. Left as 0 it decodes
+            // to a valid 1 January 1970, which makes an unstarted job look like one that
+            // started 56 years ago — so every queued job reads as already running, and the
+            // ETA's percentiles are computed over a pile of 1970 dates.
+            func stamp(_ i: Int) -> Int?  { int(i).flatMap { $0 == 0 ? nil : $0 } }
 
             guard
                 let id       = int(col.id),
@@ -201,10 +207,14 @@ nonisolated final class TreeHerderService: Sendable {
                 jobTypeSymbol:  str(col.jobTypeSymbol)  ?? "",
                 jobGroupName:   str(col.jobGroupName)   ?? "",
                 jobGroupSymbol: str(col.jobGroupSymbol) ?? "",
-                state:          JobState(rawValue:  stateStr)                 ?? .completed,
+                // Defaulting an unrecognised state to `.pending` rather than `.completed`:
+                // guessing "done" on a state we don't model is what fires a completion
+                // notification early, and the watch is one-shot so no correction follows.
+                state:          JobState(rawValue:  stateStr)                 ?? .pending,
                 result:         JobResult(rawValue: str(col.result) ?? "")    ?? .unknown,
-                startTimestamp: int(col.startTimestamp),
-                endTimestamp:   int(col.endTimestamp),
+                submitTimestamp: stamp(col.submitTimestamp),
+                startTimestamp: stamp(col.startTimestamp),
+                endTimestamp:   stamp(col.endTimestamp),
                 tier:           int(col.tier) ?? 1
             ))
         }
