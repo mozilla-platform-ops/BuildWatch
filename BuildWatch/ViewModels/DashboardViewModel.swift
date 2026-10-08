@@ -68,6 +68,9 @@ final class DashboardViewModel {
     private(set) var username: String
 
     private let gate = RequestGate(limit: 4)
+    /// Push Health prefetches are slow on Treeherder's side, so at most two run at once.
+    private let prefetchGate = RequestGate(limit: 2)
+    private var healthTasks: [Int: Task<Void, Never>] = [:]
 
     init() {
         let stored = UserDefaults.standard.array(forKey: "watchedPushIds") as? [Int] ?? []
@@ -368,22 +371,65 @@ final class DashboardViewModel {
         let revision = push.revision
         if let summary = try? await gate.run({ try await TreeHerderService.shared.fetchHealthSummary(revision: revision) }) {
             healthSummaries[push.id] = summary
+            Task { await prefetchHealth(for: push) }
         }
     }
 
-    func fetchHealth(for push: Push) async {
-        let revision = push.revision
-        if let health = try? await TreeHerderService.shared.fetchHealth(revision: revision) {
-            healths[push.id] = health
+    /// Push Health takes 12–17s when Treeherder hasn't computed it recently and about a second
+    /// after, so a push with failures has it fetched as soon as the list knows about the
+    /// failures, before anyone taps the push. Green pushes don't need it: their verdict comes
+    /// from the job list.
+    func prefetchHealth(for push: Push) async {
+        guard healths[push.id] == nil, healthTasks[push.id] == nil, hasFailures(push) else { return }
+        if let cached = await HealthCache.load(revision: push.revision) {
+            healths[push.id] = cached
+            return
         }
+        _ = try? await prefetchGate.run { await self.fetchHealth(for: push) }
+    }
+
+    /// Shows a finished push's saved Push Health straight away, then asks for a fresh one.
+    func openHealth(for push: Push) async {
+        if healths[push.id] == nil, let cached = await HealthCache.load(revision: push.revision) {
+            healths[push.id] = cached
+        }
+        await fetchHealth(for: push)
+    }
+
+    /// One request per push at a time: opening a push whose prefetch is still running waits on
+    /// that request rather than starting a second slow one.
+    func fetchHealth(for push: Push) async {
+        if let inFlight = healthTasks[push.id] {
+            await inFlight.value
+            return
+        }
+        let revision = push.revision
+        let task = Task {
+            guard let health = try? await TreeHerderService.shared.fetchHealth(revision: revision) else { return }
+            healths[push.id] = health
+            await HealthCache.save(health, revision: revision)
+        }
+        healthTasks[push.id] = task
+        await task.value
+        healthTasks[push.id] = nil
+    }
+
+    private func hasFailures(_ push: Push) -> Bool {
+        if let summary = healthSummaries[push.id],
+           (summary.testFailureCount ?? 0) + (summary.buildFailureCount ?? 0) + (summary.lintFailureCount ?? 0) > 0 {
+            return true
+        }
+        let status = summaries[push.id]?.ringStatus ?? healthSummaries[push.id]?.status ?? [:]
+        return SimpleView.failedResults.contains { (status[$0] ?? 0) > 0 }
     }
 
     // MARK: - One job's failures
 
+    /// Not queued behind the background work: this is someone waiting on a tap.
     func fetchFailures(jobId: Int) async {
         guard suggestions[jobId] == nil else { return }
-        async let lines = try? gate.run { try await TreeHerderService.shared.fetchBugSuggestions(jobId: jobId) }
-        async let detail = try? gate.run { try await TreeHerderService.shared.fetchJobDetail(jobId: jobId) }
+        async let lines = try? TreeHerderService.shared.fetchBugSuggestions(jobId: jobId)
+        async let detail = try? TreeHerderService.shared.fetchJobDetail(jobId: jobId)
         let (fetchedLines, fetchedDetail) = await (lines, detail)
         if let fetchedDetail { jobDetails[jobId] = fetchedDetail }
         suggestions[jobId] = fetchedLines ?? []

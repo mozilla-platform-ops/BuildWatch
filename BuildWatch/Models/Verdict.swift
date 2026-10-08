@@ -105,6 +105,21 @@ nonisolated enum SimpleView {
         return Verdict(tone: .good, headline: V.allGreen, sub: V.nothingToLookAt(progress.total))
     }
 
+    /// The verdict while Push Health is still sorting a push's failures: what broke, from the
+    /// row summary's counts of new failures, with the parent check still to come. `nil` when
+    /// there isn't a summary to go on either.
+    static func provisionalVerdict(_ summary: HealthSummary?) -> Verdict? {
+        guard let summary else { return nil }
+        typealias V = Strings.Verdict
+        var broke: [String] = []
+        if let n = summary.testFailureCount, n > 0 { broke.append(V.testsBroke(n)) }
+        if let n = summary.buildFailureCount, n > 0 { broke.append(V.buildsBroke(n)) }
+        if (summary.lintFailureCount ?? 0) > 0 { broke.append(V.lintFailed) }
+        return broke.isEmpty
+            ? Verdict(tone: .quiet, headline: V.nothingNew, sub: V.checking)
+            : Verdict(tone: .bad, headline: V.sentence(broke), sub: V.checking)
+    }
+
     // MARK: - ETA
 
     static func describe(_ eta: PushETA?, started: Bool, now: Date = Date()) -> (headline: String, line: String)? {
