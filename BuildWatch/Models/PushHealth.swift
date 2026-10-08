@@ -12,32 +12,32 @@ nonisolated struct HealthSummary: Decodable, Sendable {
 ///
 /// Push Health only reports failures classified as new (classification 6); the push
 /// screen finds the rest itself from the job list and files them under "Seen before".
-nonisolated struct PushHealth: Decodable, Sendable {
+nonisolated struct PushHealth: Codable, Sendable {
     let status: [String: Int]
     let metrics: Metrics
     let jobs: [String: [HealthJob]]
 
-    struct Metrics: Decodable, Sendable {
+    struct Metrics: Codable, Sendable {
         let tests: Tests
         let builds: Jobs
         let linting: Jobs
     }
 
-    struct Tests: Decodable, Sendable {
+    struct Tests: Codable, Sendable {
         let details: Details
 
-        struct Details: Decodable, Sendable {
+        struct Details: Codable, Sendable {
             let needInvestigation: [HealthTest]
             let knownIssues: [HealthTest]
         }
     }
 
-    struct Jobs: Decodable, Sendable {
+    struct Jobs: Codable, Sendable {
         let details: [HealthJob]
     }
 }
 
-nonisolated struct HealthTest: Decodable, Sendable {
+nonisolated struct HealthTest: Codable, Sendable {
     let testName: String
     let jobName: String
     let platform: String
@@ -47,7 +47,7 @@ nonisolated struct HealthTest: Decodable, Sendable {
     let failedInJobs: [Int]
 }
 
-nonisolated struct HealthJob: Decodable, Sendable, Identifiable {
+nonisolated struct HealthJob: Codable, Sendable, Identifiable {
     let id: Int
     let jobTypeName: String
     let jobTypeSymbol: String
@@ -114,5 +114,49 @@ nonisolated struct JobDetail: Decodable, Sendable {
         case id, logs
         case taskId = "task_id"
         case retryId = "retry_id"
+    }
+}
+
+/// Push Health for finished pushes, kept on disk so a push opened again, even after a relaunch,
+/// shows its sections straight away. A running push's health changes minute to minute, so it
+/// isn't kept.
+nonisolated enum HealthCache {
+    private static let limit = 60
+
+    private static var directory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("PushHealth", isDirectory: true)
+    }
+
+    private static func file(_ revision: String) -> URL {
+        directory.appendingPathComponent("\(revision).json")
+    }
+
+    static func load(revision: String) async -> PushHealth? {
+        await Task.detached(priority: .userInitiated) {
+            guard let data = try? Data(contentsOf: file(revision)) else { return nil }
+            return try? JSONDecoder().decode(PushHealth.self, from: data)
+        }.value
+    }
+
+    static func save(_ health: PushHealth, revision: String) async {
+        guard !SimpleView.progress(health.status).running else { return }
+        await Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            guard let data = try? JSONEncoder().encode(health) else { return }
+            try? data.write(to: file(revision), options: .atomic)
+
+            // Keep the newest few dozen.
+            let keys: [URLResourceKey] = [.contentModificationDateKey]
+            let files = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys)) ?? []
+            guard files.count > limit else { return }
+            let oldestFirst = files.sorted {
+                let a = (try? $0.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
+                let b = (try? $1.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
+                return a < b
+            }
+            for old in oldestFirst.prefix(files.count - limit) { try? fm.removeItem(at: old) }
+        }.value
     }
 }

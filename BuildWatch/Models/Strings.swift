@@ -85,6 +85,7 @@ nonisolated enum Strings {
         static func failsOnParentToo(_ n: Int) -> String {
             "\(countWord(n)) \(plural(n, "test fails", "tests fail")) here, but on the parent too."
         }
+        static let checking = "Checking these against the parent and known intermittents…"
         static let allGreen = "All green."
         static func nothingToLookAt(_ total: Int) -> String { "\(total) \(plural(total, "job")), nothing needs a look." }
     }
@@ -101,6 +102,7 @@ nonisolated enum Strings {
         static let lint = "Lint"
         static let alsoOnParent = "Also failing on the parent"
         static let seenBefore = "Seen before"
+        static let failures = "Failures"
         static let knownIntermittents = "Known intermittents"
         static let legend: [(key: String, label: String)] = [
             ("testfailed", "failed"),

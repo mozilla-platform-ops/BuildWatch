@@ -13,7 +13,9 @@ struct PushScreen: View {
         let summary = viewModel.summary(for: push)
         let jobs = viewModel.jobsByPush[push.id]
         let counts = jobs != nil ? summary?.ringStatus : (health?.status ?? viewModel.healthSummaries[push.id]?.status)
-        let progress = health != nil ? counts.map(SimpleView.progress) : nil
+        // Everything but the sorting of failures comes from the job list and the row summary,
+        // which arrive in well under a second. Only that sorting waits for Push Health.
+        let progress = counts.map(SimpleView.progress)
         let running = progress?.running ?? false
         let eta = running ? SimpleView.describe(summary?.eta, started: (progress?.done ?? 0) > 0) : nil
 
@@ -31,11 +33,15 @@ struct PushScreen: View {
             $0.tier <= 2 && $0.state == .completed && $0.result.isFailure && !reported.contains($0.id)
         }
 
-        let verdict = progress.map {
-            SimpleView.verdict(
-                yours: yours.count, parentToo: parentToo.count, builds: builds.count, lint: !lint.isEmpty,
-                progress: $0, etaHeadline: eta?.headline, seenBefore: seenBefore.count
-            )
+        let failedJobs = (jobs ?? []).filter { $0.tier <= 2 && $0.state == .completed && $0.result.isFailure }
+        let sorted = health != nil || (jobs != nil && failedJobs.isEmpty)
+        let verdict: SimpleView.Verdict? = progress.flatMap { progress in
+            sorted
+                ? SimpleView.verdict(
+                    yours: yours.count, parentToo: parentToo.count, builds: builds.count, lint: !lint.isEmpty,
+                    progress: progress, etaHeadline: eta?.headline, seenBefore: seenBefore.count
+                )
+                : SimpleView.provisionalVerdict(viewModel.healthSummaries[push.id])
         }
 
         SimplePage(
@@ -67,6 +73,21 @@ struct PushScreen: View {
                     }
                     CardSection(title: Strings.Push.knownIntermittents, count: known.count, quiet: true) {
                         ForEach(known) { TestCard(group: $0, health: health, push: push) }
+                    }
+                }
+                .svRise()
+            } else if !failedJobs.isEmpty {
+                // Until Push Health has sorted them, the failures as the job list has them, so
+                // there's already something to tap.
+                CardSection(title: Strings.Push.failures, count: failedJobs.count) {
+                    ForEach(failedJobs) { job in
+                        JobCard(
+                            job: HealthJob(
+                                id: job.id, jobTypeName: job.jobTypeName, jobTypeSymbol: job.jobTypeSymbol,
+                                platform: job.platform, result: job.result.rawValue
+                            ),
+                            push: push
+                        )
                     }
                 }
                 .svRise()
@@ -198,8 +219,10 @@ struct PushScreen: View {
 
     /// Reads the push, then keeps it fresh once a minute while it's running, as the web does.
     private func watch() async {
-        async let health: Void = viewModel.fetchHealth(for: push)
+        async let health: Void = viewModel.openHealth(for: push)
+        async let summary: Void = viewModel.fetchHealthSummary(for: push)
         await viewModel.fetchJobs(for: push)
+        await summary
         await health
         while !Task.isCancelled {
             let running = viewModel.healths[push.id] == nil || (viewModel.summary(for: push)?.isRunning ?? true)
