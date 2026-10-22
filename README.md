@@ -238,6 +238,7 @@ quietly; 1.1 removed it, and no write action will come back until sign-in is beh
 
 | Version | |
 |---|---|
+| **1.4** | No more Push Health: the verdict counts failed jobs, new errors and classified ones straight from the job list, so pushes open at once (1.3.1 made opening fast) |
 | **1.3** | The Treeherder simple-view design: the verdict, Push Health sections, failures and bugs in place, light and dark, anyone's pushes. And when a push will finish (built as 1.2, first shipped here) |
 | **1.1** | Delta refreshes, background polling, VoiceOver, legible light mode, tier-2 completion fix, retrigger removed |
 | **1.0** | First App Store release, 24 August 2026 |
