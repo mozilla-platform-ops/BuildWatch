@@ -28,7 +28,7 @@ nonisolated enum SimpleView {
         )
     }
 
-    /// Push Health's status summary undercounts failures, so count from the job list.
+    /// Tier 1 and 2 jobs by state, and finished ones by result.
     static func status(from jobs: [Job]) -> [String: Int] {
         var status = ["completed": 0, "pending": 0, "running": 0, "unscheduled": 0]
         for job in jobs where job.tier <= 2 {
@@ -42,28 +42,39 @@ nonisolated enum SimpleView {
         return status
     }
 
+    /// Failed jobs split the way the full view's classifications do: still open
+    /// (unclassified, some with an error line Treeherder hasn't seen before), or already
+    /// classified by a sheriff or the author.
+    struct FailureCounts: Equatable, Sendable {
+        let failed: Int
+        let open: Int
+        let new: Int
+        var classified: Int { failed - open }
+
+        init(_ jobs: [Job]) {
+            let failedJobs = jobs.filter(\.isCountedFailure)
+            let openJobs = failedJobs.filter { !$0.isClassified }
+            failed = failedJobs.count
+            open = openJobs.count
+            new = openJobs.filter(\.isNewFailure).count
+        }
+    }
+
     // MARK: - Push rows
 
-    static func describe(_ summary: HealthSummary?, status: [String: Int]?) -> (tone: Tone, text: String) {
+    static func describe(_ summary: PushSummary?) -> (tone: Tone, text: String) {
         guard let summary else { return (.quiet, "") }
-        let status = status ?? summary.status
-        let progress = progress(status)
-        let counts: [(Int, String)] = [
-            (summary.testFailureCount ?? 0, "tests"),
-            (summary.buildFailureCount ?? 0, "build"),
-            (summary.lintFailureCount ?? 0, "lint"),
-        ]
-        let broken = counts.filter { $0.0 > 0 }.map(\.1)
-
-        if !broken.isEmpty {
-            let text = Strings.List.failing(broken)
-            return (.bad, progress.running ? Strings.List.stillRunning(text) : text)
+        let counts = summary.failureCounts
+        let progress = progress(summary.ringStatus)
+        if counts.failed > 0 {
+            var parts = [Strings.List.failed(counts.failed)]
+            if counts.new > 0 { parts.append(Strings.List.newCount(counts.new)) }
+            if counts.open == 0 { parts.append(Strings.List.allClassified) }
+            let text = parts.joined(separator: " · ")
+            return (counts.open > 0 ? .bad : .quiet, progress.running ? Strings.List.stillRunning(text) : text)
         }
         if progress.running {
             return (.running, Strings.List.running(progress.done, progress.total))
-        }
-        if failedResults.contains(where: { (status[$0] ?? 0) > 0 }) {
-            return (.quiet, Strings.List.onlySeenBefore)
         }
         return (.good, Strings.List.green)
     }
@@ -76,48 +87,28 @@ nonisolated enum SimpleView {
         let sub: String
     }
 
-    static func verdict(
-        yours: Int, parentToo: Int, builds: Int, lint: Bool,
-        progress: Progress, etaHeadline: String?, seenBefore: Int
-    ) -> Verdict {
+    /// How many jobs failed and the facts about them, with no guess at whose they are.
+    static func verdict(_ counts: FailureCounts, progress: Progress, etaHeadline: String?) -> Verdict {
         typealias V = Strings.Verdict
-        var broke: [String] = []
-        if yours > 0 { broke.append(V.testsBroke(yours)) }
-        if builds > 0 { broke.append(V.buildsBroke(builds)) }
-        if lint { broke.append(V.lintFailed) }
+        let soFar = progress.running ? V.soFar(progress.done, progress.total) : ""
 
-        let soFar = progress.running ? V.soFar(progress.done, progress.total) : nil
-        let others = seenBefore > 0 ? V.othersSeenBefore(seenBefore) : ""
+        guard counts.failed > 0 else {
+            return progress.running
+                ? Verdict(tone: .running, headline: etaHeadline ?? V.stillRunning, sub: V.nothingFailedYet(soFar))
+                : Verdict(tone: .good, headline: V.allGreen, sub: V.nothingToLookAt(progress.total))
+        }
 
-        if !broke.isEmpty {
-            let lead = soFar ?? (parentToo > 0 ? V.alsoOnParent(parentToo) : V.probablyYours)
-            return Verdict(tone: .bad, headline: V.sentence(broke), sub: lead + others)
+        let headline = V.jobsFailed(counts.failed)
+        if counts.open == 0 {
+            let sub = [V.allClassified, soFar].filter { !$0.isEmpty }.joined(separator: " ")
+            return Verdict(tone: .quiet, headline: headline, sub: sub)
         }
-        if progress.running {
-            return Verdict(tone: .running, headline: etaHeadline ?? V.stillRunning, sub: V.nothingNewYet(soFar ?? "", others))
-        }
-        if seenBefore > 0 && parentToo == 0 {
-            return Verdict(tone: .good, headline: V.nothingNew, sub: V.likelyIntermittent(seenBefore))
-        }
-        if parentToo > 0 {
-            return Verdict(tone: .good, headline: V.nothingNew, sub: V.failsOnParentToo(parentToo))
-        }
-        return Verdict(tone: .good, headline: V.allGreen, sub: V.nothingToLookAt(progress.total))
-    }
-
-    /// The verdict while Push Health is still sorting a push's failures: what broke, from the
-    /// row summary's counts of new failures, with the parent check still to come. `nil` when
-    /// there isn't a summary to go on either.
-    static func provisionalVerdict(_ summary: HealthSummary?) -> Verdict? {
-        guard let summary else { return nil }
-        typealias V = Strings.Verdict
-        var broke: [String] = []
-        if let n = summary.testFailureCount, n > 0 { broke.append(V.testsBroke(n)) }
-        if let n = summary.buildFailureCount, n > 0 { broke.append(V.buildsBroke(n)) }
-        if (summary.lintFailureCount ?? 0) > 0 { broke.append(V.lintFailed) }
-        return broke.isEmpty
-            ? Verdict(tone: .quiet, headline: V.nothingNew, sub: V.checking)
-            : Verdict(tone: .bad, headline: V.sentence(broke), sub: V.checking)
+        let sub = [
+            counts.new > 0 ? V.newErrors(counts.new) : "",
+            counts.classified > 0 ? V.classified(counts.classified) : "",
+            soFar,
+        ].filter { !$0.isEmpty }.joined(separator: " ")
+        return Verdict(tone: .bad, headline: headline, sub: sub)
     }
 
     // MARK: - ETA
@@ -193,42 +184,6 @@ nonisolated enum SimpleView {
               parts[0].contains("TEST-UNEXPECTED") || parts[0].contains("PROCESS-CRASH")
         else { return nil }
         return parts[1].trimmingCharacters(in: .whitespaces)
-    }
-
-    // MARK: - Failing tests, grouped
-
-    struct TestGroup: Identifiable {
-        var id: String { testName }
-        let testName: String
-        var jobIds: [Int] = []
-        var totalJobs = 0
-        var platforms: [String] = []
-        var configs: [String] = []
-        var failedInParent = true
-        var entries: [HealthTest] = []
-    }
-
-    static func groupByTest(_ failures: [HealthTest]) -> [TestGroup] {
-        var order: [String] = []
-        var groups: [String: TestGroup] = [:]
-        for failure in failures {
-            var group = groups[failure.testName] ?? {
-                order.append(failure.testName)
-                return TestGroup(testName: failure.testName)
-            }()
-            for id in failure.failedInJobs where !group.jobIds.contains(id) { group.jobIds.append(id) }
-            group.totalJobs += failure.totalJobs
-            let platform = PlatformNames.display(failure.platform)
-            if !group.platforms.contains(platform) { group.platforms.append(platform) }
-            if !group.configs.contains(failure.config) { group.configs.append(failure.config) }
-            group.failedInParent = group.failedInParent && failure.failedInParent
-            group.entries.append(failure)
-            groups[failure.testName] = group
-        }
-        return order.compactMap { groups[$0] }
-            .enumerated()
-            .sorted { ($0.element.jobIds.count, -$0.offset) > ($1.element.jobIds.count, -$1.offset) }
-            .map(\.element)
     }
 
     // MARK: - One job's failure lines

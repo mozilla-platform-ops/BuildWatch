@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// One push, the way Treeherder's simple view tells it (`PushDetail.jsx`): a ring of its
-/// jobs, one sentence about what broke and whether it's yours, then the failures.
+/// jobs, one sentence about what failed, then the failures.
 struct PushScreen: View {
     let push: Push
     @Environment(DashboardViewModel.self) private var viewModel
@@ -9,85 +9,37 @@ struct PushScreen: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        let health = viewModel.healths[push.id]
         let summary = viewModel.summary(for: push)
         let jobs = viewModel.jobsByPush[push.id]
-        let counts = jobs != nil ? summary?.ringStatus : (health?.status ?? viewModel.healthSummaries[push.id]?.status)
-        // Everything but the sorting of failures comes from the job list and the row summary,
-        // which arrive in well under a second. Only that sorting waits for Push Health.
+        let counts = summary?.ringStatus
         let progress = counts.map(SimpleView.progress)
         let running = progress?.running ?? false
         let eta = running ? SimpleView.describe(summary?.eta, started: (progress?.done ?? 0) > 0) : nil
-
-        let tests = health?.metrics.tests.details
-        let groups = SimpleView.groupByTest(tests?.needInvestigation ?? [])
-        let yours = groups.filter { !$0.failedInParent }
-        let parentToo = groups.filter(\.failedInParent)
-        let known = SimpleView.groupByTest(tests?.knownIssues ?? [])
-        let builds = health?.metrics.builds.details ?? []
-        let lint = health?.metrics.linting.details ?? []
-
-        // Push Health only reports failures classified as new (id 6); show the rest too.
-        let reported = Set(groups.flatMap(\.jobIds) + known.flatMap(\.jobIds) + builds.map(\.id) + lint.map(\.id))
-        let seenBefore = (jobs ?? []).filter {
-            $0.tier <= 2 && $0.state == .completed && $0.result.isFailure && !reported.contains($0.id)
+        let verdict = summary.flatMap { summary in
+            progress.map { SimpleView.verdict(summary.failureCounts, progress: $0, etaHeadline: eta?.headline) }
         }
 
-        let failedJobs = (jobs ?? []).filter { $0.tier <= 2 && $0.state == .completed && $0.result.isFailure }
-        let sorted = health != nil || (jobs != nil && failedJobs.isEmpty)
-        let verdict: SimpleView.Verdict? = progress.flatMap { progress in
-            sorted
-                ? SimpleView.verdict(
-                    yours: yours.count, parentToo: parentToo.count, builds: builds.count, lint: !lint.isEmpty,
-                    progress: progress, etaHeadline: eta?.headline, seenBefore: seenBefore.count
-                )
-                : SimpleView.provisionalVerdict(viewModel.healthSummaries[push.id])
-        }
+        let failed = (jobs ?? []).filter(\.isCountedFailure)
+        let open = failed.filter { !$0.isClassified }
+        let classified = failed.filter(\.isClassified)
 
         SimplePage(
             backLabel: Strings.List.title(viewModel.personName(viewModel.username) ?? viewModel.authorName),
             fullView: push.treeherderURL,
-            refresh: { await reload() }
+            refresh: { await viewModel.reload(push) }
         ) {
             Text("revision: \(push.shortRevision)")
         } content: {
             header
             hero(counts: counts, progress: progress, verdict: verdict, eta: eta, running: running)
 
-            if let health {
+            if !failed.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
-                    CardSection(title: Strings.Push.brokenHere, count: yours.count) {
-                        ForEach(yours) { TestCard(group: $0, health: health, push: push) }
+                    CardSection(title: Strings.Push.failures, count: open.count) {
+                        FailureList(jobs: open, push: push)
                     }
-                    CardSection(title: Strings.Push.builds, count: builds.count) {
-                        ForEach(builds) { JobCard(job: $0, push: push) }
-                    }
-                    CardSection(title: Strings.Push.lint, count: lint.count) {
-                        LintCard(jobs: lint, push: push)
-                    }
-                    CardSection(title: Strings.Push.alsoOnParent, count: parentToo.count, quiet: true) {
-                        ForEach(parentToo) { TestCard(group: $0, health: health, push: push) }
-                    }
-                    CardSection(title: Strings.Push.seenBefore, count: seenBefore.count, quiet: true) {
-                        SeenBefore(jobs: seenBefore, push: push)
-                    }
-                    CardSection(title: Strings.Push.knownIntermittents, count: known.count, quiet: true) {
-                        ForEach(known) { TestCard(group: $0, health: health, push: push) }
-                    }
-                }
-                .svRise()
-            } else if !failedJobs.isEmpty {
-                // Until Push Health has sorted them, the failures as the job list has them, so
-                // there's already something to tap.
-                CardSection(title: Strings.Push.failures, count: failedJobs.count) {
-                    ForEach(failedJobs) { job in
-                        JobCard(
-                            job: HealthJob(
-                                id: job.id, jobTypeName: job.jobTypeName, jobTypeSymbol: job.jobTypeSymbol,
-                                platform: job.platform, result: job.result.rawValue
-                            ),
-                            push: push
-                        )
+                    CardSection(title: Strings.Push.classified, count: classified.count, quiet: true) {
+                        FailureList(jobs: classified, push: push)
                     }
                 }
                 .svRise()
@@ -211,25 +163,14 @@ struct PushScreen: View {
 
     // MARK: - Data
 
-    private func reload() async {
-        async let health: Void = viewModel.fetchHealth(for: push)
-        await viewModel.reload(push)
-        await health
-    }
-
     /// Reads the push, then keeps it fresh once a minute while it's running, as the web does.
     private func watch() async {
-        async let health: Void = viewModel.openHealth(for: push)
-        async let summary: Void = viewModel.fetchHealthSummary(for: push)
         await viewModel.fetchJobs(for: push)
-        await summary
-        await health
         while !Task.isCancelled {
-            let running = viewModel.healths[push.id] == nil || (viewModel.summary(for: push)?.isRunning ?? true)
-            guard running else { return }
+            guard viewModel.summary(for: push)?.isRunning ?? true else { return }
             try? await Task.sleep(for: .seconds(60))
             guard !Task.isCancelled, scenePhase == .active else { continue }
-            await reload()
+            await viewModel.reload(push)
         }
     }
 }
@@ -391,164 +332,9 @@ private struct NewTag: View {
     }
 }
 
-/// `.sv-runbar`: one cell per run of a test, the failed ones orange.
-private struct RunBar: View {
-    let failed: Int
-    let total: Int
-
-    var body: some View {
-        let cells = max(1, min(total, 20))
-        let red = Int((Double(failed) / Double(max(total, 1)) * Double(cells)).rounded())
-        HStack(spacing: 3) {
-            ForEach(0..<cells, id: \.self) { i in
-                Capsule()
-                    .fill(i < red ? SV.testfailed : SV.hairline)
-                    .frame(maxWidth: 22)
-                    .frame(height: 6)
-            }
-        }
-        .padding(.top, 12)
-        .accessibilityHidden(true)
-    }
-}
-
-private struct TestCard: View {
-    let group: SimpleView.TestGroup
-    let health: PushHealth
-    let push: Push
-
-    private struct Run: Identifiable {
-        let id: Int
-        let label: String
-    }
-
-    var body: some View {
-        let failed = group.jobIds.count
-        let runs = group.entries.flatMap { entry in
-            entry.failedInJobs.map { id in
-                let symbol = health.jobs[entry.jobName]?.first { $0.id == id }?.jobTypeSymbol
-                let label = "\(PlatformNames.display(entry.platform)) \(entry.config)"
-                return Run(id: id, label: symbol.map { "\(label) · \($0)" } ?? label)
-            }
-        }
-        let meta = "\(Strings.Push.failedRuns(failed, group.totalJobs)) · \(group.platforms.joined(separator: ", ")) · \(group.configs.joined(separator: ", "))"
-
-        ExpandingRuns(runs: runs.map { ($0.id, $0.label) }, push: push, under: group.testName) { open in
-            VStack(alignment: .leading, spacing: 0) {
-                TestName(name: group.testName)
-                RunBar(failed: failed, total: group.totalJobs)
-                CardMeta(text: meta, open: open) {
-                    if !group.failedInParent { NewTag() }
-                }
-            }
-        }
-    }
-}
-
-/// A card whose head opens either one job's failures, or a list of runs to choose from.
-private struct ExpandingRuns<Head: View>: View {
-    let runs: [(id: Int, label: String)]
-    let push: Push
-    let under: String
-    @ViewBuilder var head: (Bool) -> Head
-    @State private var open = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { open.toggle() }
-            } label: {
-                head(open)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-            }
-            .buttonStyle(PressStyle())
-            if open {
-                if runs.count == 1 {
-                    InlineFailures(jobId: runs[0].id, push: push, under: under)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(runs, id: \.id) { run in
-                            Divider().overlay(SV.hairline)
-                            RunRow(jobId: run.id, label: Text(run.label), push: push, under: under)
-                        }
-                    }
-                }
-            }
-        }
-        .svCard()
-    }
-}
-
-/// `.sv-run`: one run of a test, or one lint job, opening its failures in place.
-private struct RunRow: View {
-    let jobId: Int
-    let label: Text
-    let push: Push
-    var under: String?
-    @State private var open = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { open.toggle() }
-            } label: {
-                HStack(spacing: 12) {
-                    label.svFont(15).multilineTextAlignment(.leading)
-                    Spacer(minLength: 0)
-                    Chevron(open: open)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .frame(minHeight: 48)
-            }
-            .buttonStyle(PressStyle())
-            if open {
-                InlineFailures(jobId: jobId, push: push, under: under)
-            }
-        }
-    }
-}
-
-private struct JobCard: View {
-    let job: HealthJob
-    let push: Push
-
-    var body: some View {
-        ExpandingCard(jobId: job.id, push: push) { open in
-            VStack(alignment: .leading, spacing: 2) {
-                Text(SimpleView.jobShortName(job.jobTypeName)).svFont(17, .bold)
-                CardMeta(
-                    text: (job.platform == "lint" ? "" : "\(PlatformNames.display(job.platform)) · ")
-                        + SimpleView.resultWord(job.result),
-                    open: open
-                ) { EmptyView() }
-            }
-        }
-    }
-}
-
-private struct LintCard: View {
-    let jobs: [HealthJob]
-    let push: Push
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(jobs.enumerated()), id: \.element.id) { index, job in
-                if index > 0 { Divider().overlay(SV.hairline) }
-                RunRow(
-                    jobId: job.id,
-                    label: Text("\(SimpleView.jobShortName(job.jobTypeName))\(Text(" · \(SimpleView.resultWord(job.result))").foregroundStyle(SV.muted))"),
-                    push: push
-                )
-            }
-        }
-        .svCard()
-    }
-}
-
-/// Failures Push Health didn't report, named by the first failing test in each log.
-private struct SeenBefore: View {
+/// Failed jobs named by the first failing test in each log and grouped, so five red jobs
+/// read as the tests they are.
+private struct FailureList: View {
     let jobs: [Job]
     let push: Push
     @Environment(DashboardViewModel.self) private var viewModel
@@ -571,7 +357,9 @@ private struct SeenBefore: View {
                     if !dir.isEmpty {
                         Text(dir).svFont(13).foregroundStyle(SV.muted).multilineTextAlignment(.leading)
                     }
-                    CardMeta(text: meta, open: open) { EmptyView() }
+                    CardMeta(text: meta, open: open) {
+                        if group.jobs.contains(where: \.isNewFailure) { NewTag() }
+                    }
                 }
             }
         }
