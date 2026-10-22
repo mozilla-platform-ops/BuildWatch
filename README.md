@@ -79,14 +79,15 @@ remembered on the **Pushes by…** screen.
 ### The verdict
 
 Open a push for its ring, the number of jobs (or the percentage done while it runs), and the
-verdict: what broke, and whether it's yours. BuildWatch reads Treeherder's Push Health to tell
-a failure that's **new in your push** from one that **also fails on the parent**, one that's
-been **seen before**, or a **known intermittent**, and files each failure under its heading:
+verdict: how many jobs failed, how many have an error Treeherder hasn't seen before (the full
+view's NEW badge), and how many are already classified. The failures are listed by the first
+failing test in each log, with **New** on the ones that have the badge, and the classified ones
+in their own section:
 
-**Broken here · Builds · Lint · Also failing on the parent · Seen before · Known intermittents**
+**Failures · Already classified**
 
-Push Health only reports failures classified as new, so BuildWatch finds the rest itself from
-the job list and names each one by the first failing test in its log.
+It doesn't guess whose a failure is: the verdict, the cards and the list rows all count from the
+push's own job list.
 
 ### The failure, not the log
 
@@ -140,7 +141,7 @@ it's open: every 30 seconds while something is building, every two minutes once 
 
 | Source | Used for |
 |--------|----------|
-| [Treeherder](https://treeherder.mozilla.org) | Pushes, jobs, Push Health, failure lines and bug suggestions, log errors |
+| [Treeherder](https://treeherder.mozilla.org) | Pushes, jobs, failure lines and bug suggestions, log errors |
 | [Bugzilla](https://bugzilla.mozilla.org) | Links to the bugs matched to a failure |
 | Taskcluster | Links to raw logs, as Treeherder reports them |
 
@@ -164,7 +165,7 @@ BuildWatch/
 ├── Models/
 │   ├── Strings.swift            the simple view's words (strings.js)
 │   ├── Verdict.swift            verdict, row status, grouping (helpers.js)
-│   ├── PushHealth.swift         Push Health, bug suggestions, job detail
+│   ├── JobFailures.swift        bug suggestions, job detail
 │   ├── PlatformNames.swift      Treeherder's thPlatformMap
 │   ├── Push.swift, Job.swift    pushes, jobs, results, states
 │   ├── PushSummary.swift        derived job state, computed once per refresh
@@ -173,7 +174,7 @@ BuildWatch/
 ├── Services/
 │   └── TreeHerderService.swift  Treeherder API, compact-job parser
 ├── ViewModels/
-│   └── DashboardViewModel.swift pushes, jobs, health, people, watches
+│   └── DashboardViewModel.swift pushes, jobs, people, watches
 └── Views/
     ├── SimplePage.swift         bars, theme switch, page scaffold, Kit
     ├── TickRing.swift           the ring (Ring.jsx)
@@ -237,6 +238,7 @@ quietly; 1.1 removed it, and no write action will come back until sign-in is beh
 
 | Version | |
 |---|---|
+| **1.4** | No more Push Health: the verdict counts failed jobs, new errors and classified ones straight from the job list, so pushes open at once (1.3.1 made opening fast) |
 | **1.3** | The Treeherder simple-view design: the verdict, Push Health sections, failures and bugs in place, light and dark, anyone's pushes. And when a push will finish (built as 1.2, first shipped here) |
 | **1.1** | Delta refreshes, background polling, VoiceOver, legible light mode, tier-2 completion fix, retrigger removed |
 | **1.0** | First App Store release, 24 August 2026 |

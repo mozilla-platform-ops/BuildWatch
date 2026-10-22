@@ -60,11 +60,7 @@ struct PushListScreen: View {
                     }
                     .buttonStyle(PressStyle())
                     .svRise(index: index)
-                    .task {
-                        async let summary: Void = viewModel.fetchHealthSummary(for: push)
-                        await viewModel.fetchJobs(for: push)
-                        await summary
-                    }
+                    .task { await viewModel.fetchJobs(for: push) }
                     .contextMenu {
                         let watched = viewModel.watchedPushIds.contains(push.id)
                         Button(watched ? "Stop watching" : Strings.Watch.idle,
@@ -86,20 +82,19 @@ private struct PushRow: View {
     @Environment(DashboardViewModel.self) private var viewModel
 
     var body: some View {
-        let health = viewModel.healthSummaries[push.id]
-        let status = viewModel.summary(for: push)?.ringStatus ?? health?.status
-        let described = SimpleView.describe(health, status: status)
+        let summary = viewModel.summary(for: push)
+        let described = SimpleView.describe(summary)
         let watched = viewModel.watchedPushIds.contains(push.id)
 
         HStack(spacing: 12) {
-            TickRing(status: health == nil ? nil : status, ticks: 24, size: 38, weight: 7)
+            TickRing(status: summary?.ringStatus, ticks: 24, size: 38, weight: 7)
             VStack(alignment: .leading, spacing: 6) {
                 Text(push.displayTitle)
                     .svFont(16, .bold)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 HStack(spacing: 12) {
-                    if health != nil {
+                    if summary != nil {
                         Text(described.text)
                             .svFont(14, .bold)
                             .foregroundStyle(described.tone.text)
@@ -126,11 +121,11 @@ private struct PushRow: View {
         .padding(.trailing, 14)
         .padding(.vertical, 12)
         .svCard()
-        .modifier(Pulse(key: health == nil ? nil : "\(described.text)", tone: described.tone))
+        .modifier(Pulse(key: summary == nil ? nil : "\(described.text)", tone: described.tone))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel([
             push.displayTitle,
-            health == nil ? "loading" : described.text,
+            summary == nil ? "loading" : described.text,
             SimpleView.ago(push.date),
             watched ? "watched" : nil,
         ].compactMap { $0 }.joined(separator: ", "))

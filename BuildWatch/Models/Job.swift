@@ -81,6 +81,18 @@ nonisolated struct Job: Identifiable, Codable, Sendable {
     let startTimestamp: Int?
     let endTimestamp: Int?
     let tier: Int
+    /// Treeherder's failure classification: 1 is "not classified", 6 is "new failure not
+    /// classified" (an error line Treeherder hadn't seen before, the full view's NEW badge),
+    /// and anything else means a sheriff or the author has classified it.
+    let classification: Int?
+
+    static let unclassified: Set<Int> = [1, 6]
+    static let newFailure = 6
+
+    /// A finished tier 1 or 2 job that failed: what the verdict and the failure cards count.
+    var isCountedFailure: Bool { tier <= 2 && state == .completed && result.isFailure }
+    var isClassified: Bool { !Self.unclassified.contains(classification ?? 1) }
+    var isNewFailure: Bool { classification == Self.newFailure }
 
     var startDate: Date? {
         startTimestamp.map { Date(timeIntervalSince1970: TimeInterval($0)) }

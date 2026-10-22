@@ -125,19 +125,6 @@ nonisolated final class TreeHerderService: Sendable {
         return try JSONDecoder().decode([TextLogError].self, from: data)
     }
 
-    // MARK: - Push Health
-
-    func fetchHealthSummary(revision: String) async throws -> HealthSummary? {
-        try await get([HealthSummary].self, "push/health_summary/", [
-            URLQueryItem(name: "revision", value: revision),
-            URLQueryItem(name: "with_in_progress_tests", value: "true"),
-        ]).first
-    }
-
-    func fetchHealth(revision: String) async throws -> PushHealth {
-        try await get(PushHealth.self, "push/health/", [URLQueryItem(name: "revision", value: revision)])
-    }
-
     // MARK: - One Job
 
     func fetchBugSuggestions(jobId: Int) async throws -> [BugSuggestion] {
@@ -160,14 +147,14 @@ nonisolated final class TreeHerderService: Sendable {
 
     /// Column offsets into TreeHerder's positional job rows, resolved once per response.
     ///
-    /// The response carries 37 columns; BuildWatch reads 15. Resolving them up front turns
+    /// The response carries 37 columns; BuildWatch reads 16. Resolving them up front turns
     /// the hot loop into plain integer indexing instead of one string hash per field per row
     /// (~19k dictionary lookups on a 1,262-job push).
     private struct ColumnMap {
         let id, state, platform, platformOption: Int
         let jobTypeName, jobTypeSymbol, jobGroupName, jobGroupSymbol: Int
         let result, submitTimestamp, startTimestamp, endTimestamp, tier: Int
-        let taskId, resultSetId, pushId, lastModified: Int
+        let taskId, resultSetId, pushId, lastModified, classification: Int
 
         init(_ names: [String]) {
             var lookup: [String: Int] = Dictionary(minimumCapacity: names.count)
@@ -191,6 +178,7 @@ nonisolated final class TreeHerderService: Sendable {
             resultSetId     = at("result_set_id")
             pushId          = at("push_id")
             lastModified    = at("last_modified")
+            classification  = at("failure_classification_id")
         }
     }
 
@@ -246,7 +234,8 @@ nonisolated final class TreeHerderService: Sendable {
                 submitTimestamp: stamp(col.submitTimestamp),
                 startTimestamp: stamp(col.startTimestamp),
                 endTimestamp:   stamp(col.endTimestamp),
-                tier:           int(col.tier) ?? 1
+                tier:           int(col.tier) ?? 1,
+                classification: int(col.classification)
             ))
         }
 
