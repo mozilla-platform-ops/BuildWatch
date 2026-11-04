@@ -47,6 +47,10 @@ nonisolated struct PushSummary: Sendable {
     /// `running`, …): what the tick ring and its legend draw.
     let ringStatus: [String: Int]
 
+    /// Failed tier 1 and 2 jobs, split by classification: what the row's status line and the
+    /// push screen's verdict count.
+    let failureCounts: SimpleView.FailureCounts
+
     var isRunning: Bool { runningCount > 0 || pendingCount > 0 || lowerTierActive > 0 }
     var hasJobs: Bool { totalCount > 0 || lowerTierTotal > 0 }
     var isComplete: Bool { hasJobs && !isRunning }
@@ -101,6 +105,7 @@ nonisolated struct PushSummary: Sendable {
         // `isComplete` count all tiers in the first place.
         eta = pushedAt.flatMap { PushETA(jobs: jobs, pushedAt: $0, now: now) }
         ringStatus = SimpleView.status(from: jobs)
+        failureCounts = SimpleView.FailureCounts(jobs)
     }
 
     /// Spoken summary for the push row, so a VoiceOver user hears the same thing the

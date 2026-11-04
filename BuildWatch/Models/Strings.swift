@@ -14,10 +14,6 @@ nonisolated enum Strings {
         n >= 0 && n < numberWords.count ? numberWords[n] : String(n)
     }
 
-    static func capitalize(_ s: String) -> String {
-        s.prefix(1).uppercased() + s.dropFirst()
-    }
-
     static let feedbackURL = URL(string: "https://github.com/mozilla-platform-ops/BuildWatch/issues/new")!
 
     enum Nav {
@@ -56,36 +52,25 @@ nonisolated enum Strings {
         static func empty(_ author: String) -> String { "Nothing on try from \(author)." }
         static let wrongAddress = "Wrong address? Change it"
         static let unreachable = "Couldn't reach Treeherder."
-        static func failing(_ kinds: [String]) -> String { "\(capitalize(kinds.joined(separator: " and "))) failing" }
+        static func failed(_ n: Int) -> String { "\(n) failed" }
+        static func newCount(_ n: Int) -> String { "\(n) new" }
+        static let allClassified = "all classified"
         static func stillRunning(_ text: String) -> String { "\(text) · still running" }
         static func running(_ done: Int, _ total: Int) -> String { "Running · \(done) of \(total)" }
-        static let onlySeenBefore = "Only failures seen before"
         static let green = "All green"
     }
 
     enum Verdict {
-        static func testsBroke(_ n: Int) -> String { "\(countWord(n).lowercased()) \(plural(n, "test")) broke" }
-        static func buildsBroke(_ n: Int) -> String { "\(countWord(n).lowercased()) \(plural(n, "build")) broke" }
-        static let lintFailed = "lint failed"
-        static func sentence(_ parts: [String]) -> String { "\(capitalize(parts.joined(separator: ", ")))." }
+        static func jobsFailed(_ n: Int) -> String { "\(countWord(n)) \(plural(n, "job")) failed." }
+        /// What the full view's NEW badge means: an error line Treeherder hasn't seen.
+        static func newErrors(_ n: Int) -> String {
+            "\(countWord(n)) \(plural(n, "has an error", "have errors")) Treeherder hasn't seen before."
+        }
+        static func classified(_ n: Int) -> String { "\(countWord(n)) \(plural(n, "is", "are")) already classified." }
+        static let allClassified = "All of them are already classified."
         static func soFar(_ done: Int, _ total: Int) -> String { "\(done) of \(total) jobs done so far." }
-        static func othersSeenBefore(_ n: Int) -> String {
-            " \(countWord(n)) other \(plural(n, "failure has", "failures have")) been seen before."
-        }
-        static func alsoOnParent(_ n: Int) -> String {
-            "\(n) more \(plural(n, "test fails", "tests fail")) on the parent too."
-        }
-        static let probablyYours = "Nothing here fails on the parent, so it's probably yours."
-        static func nothingNewYet(_ soFar: String, _ others: String) -> String { "\(soFar) Nothing new has broken.\(others)" }
         static let stillRunning = "Still running."
-        static let nothingNew = "Nothing new broke."
-        static func likelyIntermittent(_ n: Int) -> String {
-            "\(countWord(n)) \(plural(n, "failure has", "failures have")) been seen before, so \(plural(n, "it's", "they're")) likely intermittent."
-        }
-        static func failsOnParentToo(_ n: Int) -> String {
-            "\(countWord(n)) \(plural(n, "test fails", "tests fail")) here, but on the parent too."
-        }
-        static let checking = "Checking these against the parent and known intermittents…"
+        static func nothingFailedYet(_ soFar: String) -> String { "\(soFar) Nothing has failed.".trimmingCharacters(in: .whitespaces) }
         static let allGreen = "All green."
         static func nothingToLookAt(_ total: Int) -> String { "\(total) \(plural(total, "job")), nothing needs a look." }
     }
@@ -97,13 +82,8 @@ nonisolated enum Strings {
         static func elapsed(_ time: String) -> String { "\(time) in" }
         static func commits(_ n: Int) -> String { "\(n) \(plural(n, "commit"))" }
         static let everyJob = "Every job, in the full view"
-        static let brokenHere = "Broken here"
-        static let builds = "Builds"
-        static let lint = "Lint"
-        static let alsoOnParent = "Also failing on the parent"
-        static let seenBefore = "Seen before"
         static let failures = "Failures"
-        static let knownIntermittents = "Known intermittents"
+        static let classified = "Already classified"
         static let legend: [(key: String, label: String)] = [
             ("testfailed", "failed"),
             ("busted", "busted"),
@@ -114,7 +94,6 @@ nonisolated enum Strings {
             ("unscheduled", "waiting on a build"),
         ]
         static let newTag = "New"
-        static func failedRuns(_ failed: Int, _ total: Int) -> String { "Failed \(failed) of \(total) \(plural(total, "run"))" }
         static func jobCount(_ n: Int) -> String { "\(n) jobs · " }
     }
 
